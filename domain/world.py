@@ -2,6 +2,7 @@ import random
 
 from .organism import Organism
 from .genome import Genome
+from .food import Food
 
 from config import (
     WORLD_WIDTH,
@@ -51,9 +52,10 @@ class World:
 
         for _ in range(count):
 
-            food = (
-                random.uniform(0, self.width),
-                random.uniform(0, self.height)
+            food_item = Food(
+                x=random.uniform(0, self.width),
+                y=random.uniform(0, self.height)
             )
 
-            self.food.append(food)
+            self.food.append(food_item)
+
