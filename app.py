@@ -7,6 +7,7 @@ from config import (
 )
 
 from domain.world import World
+from simulation.engine import SimulationEngine
 
 
 def main():
@@ -18,6 +19,8 @@ def main():
     world.spawn_organisms(INITIAL_POPULATION)
     world.spawn_food(INITIAL_FOOD)
 
+    engine = SimulationEngine(world)
+
     print("Digital Life started!")
     print("----------------------")
 
@@ -25,18 +28,29 @@ def main():
     print(f"Organisms: {len(world.organisms)}")
     print(f"Food: {len(world.food)}")
 
-    print("\nFirst organism:")
-
     organism = world.organisms[0]
 
-    print(f"ID: {organism.organism_id}")
+    print("\nInitial state:")
     print(f"Position: ({organism.x:.2f}, {organism.y:.2f})")
     print(f"Energy: {organism.energy}")
-    print(f"Health: {organism.health}")
-    print(f"Generation: {organism.generation}")
 
-    print("\nGenome:")
-    print(organism.genome)
+    print("\nRunning simulation...")
+
+    for tick in range(10):
+
+        engine.step()
+
+        print(
+            f"Tick {tick + 1}: "
+            f"Position = "
+            f"({organism.x:.2f}, {organism.y:.2f}) "
+            f"Energy = {organism.energy:.2f}"
+        )
+
+    print("\nSimulation finished.")
+    print(f"World tick: {world.tick}")
+    print(f"Organism age: {organism.age}")
+    print(f"Organism alive: {organism.alive}")
 
 
 if __name__ == "__main__":

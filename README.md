@@ -1,50 +1,74 @@
-# Digital Life
+# Digital Life 🧬
 
-Digital Life is an artificial-life simulation built in Python.
+Digital Life is an artificial-life and evolutionary simulation built in Python.
 
-The project explores how complex behavior and evolutionary patterns can emerge
-from simple rules, environmental constraints, reproduction, mutation, and
-selection.
+The project simulates a 2D environment containing artificial organisms that can move, sense their surroundings, consume resources, manage energy, age, and eventually die.
+
+The long-term goal is to evolve this into an experimental platform where evolutionary behavior and emergent traits can be observed and measured.
+
+---
 
 ## Current Status
 
-### Stage 1 — Foundation ✅
+**Phase 2 — Life Loop: Complete ✅**
 
-- 2D world
-- Organism model
-- Genome model
-- Configurable population
-- Food resources
+Implemented so far:
+
+- Configurable 2D world
+- Artificial organisms
+- Numeric genomes
 - Deterministic random seed
+- Organism position and velocity
+- Organism movement
+- World boundary constraints
+- Food resources
+- Food sensing
+- Nearby-organism sensing
+- Boundary sensing
+- Energy system
+- Food consumption
+- Metabolic energy loss
+- Rule-based decision system
+- Simulation engine
+- Organism aging
+- Death from zero energy
+- Death from maximum age
+- Simulation tick tracking
 
-### Upcoming
+---
 
-- [ ] Sensors
-- [ ] Movement
-- [ ] Food consumption
-- [ ] Energy system
-- [ ] Aging and death
-- [ ] Reproduction
-- [ ] Mutation
-- [ ] Evolution experiments
-- [ ] Pygame visualization
-- [ ] Neural-network brain
-
-## Tech Stack
-
-- Python
-- NumPy — planned
-- Pygame — planned
-- PyTorch — future
-
-## Project Structure
+## Project Architecture
 
 ```text
-digital-life/
-├── app.py
-├── config.py
-├── domain/
-│   ├── genome.py
-│   ├── organism.py
-│   └── world.py
-└── tests/
+Digital Life
+│
+├── World
+│   ├── Organisms
+│   └── Food
+│
+├── Organism
+│   ├── Position
+│   ├── Velocity
+│   ├── Energy
+│   ├── Health
+│   ├── Age
+│   ├── Generation
+│   └── Genome
+│
+├── Sensors
+│   ├── Food
+│   ├── Organisms
+│   ├── Energy
+│   └── Boundaries
+│
+├── Brain
+│   └── Rule-based Brain
+│
+└── Simulation Engine
+    ├── Sensing
+    ├── Decision
+    ├── Movement
+    ├── Food Interaction
+    ├── Metabolism
+    ├── Aging
+    └── Death
