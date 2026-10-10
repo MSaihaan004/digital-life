@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual environment
+# Virtual environments
 venv/
 .venv/
 env/
@@ -12,7 +12,7 @@ env/
 .vscode/
 .idea/
 
-# OS
+# Operating system
 .DS_Store
 Thumbs.db
 
@@ -21,7 +21,12 @@ Thumbs.db
 .coverage
 htmlcov/
 
-# Project data
-data/
-experiments/
+# Local databases
 *.sqlite3
+
+# Generated application data
+data/
+
+# Allow version-controlled experiment scripts and results
+!experiments/
+!experiment_results/

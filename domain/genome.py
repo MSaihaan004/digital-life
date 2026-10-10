@@ -1,3 +1,5 @@
+"""Genome representation for Digital Life."""
+
 from dataclasses import dataclass
 import random
 
@@ -12,12 +14,25 @@ class Genome:
     mutation_rate: float
 
     @staticmethod
-    def random():
+    def random(rng=None):
+        """Generate a random genome.
+
+        Args:
+            rng: Optional random-number generator.
+                 If omitted, Python's global random module is used.
+
+        Returns:
+            A Genome with each trait in the range [0.0, 1.0].
+        """
+
+        if rng is None:
+            rng = random
+
         return Genome(
-            speed=random.uniform(0.0, 1.0),
-            vision=random.uniform(0.0, 1.0),
-            metabolism=random.uniform(0.0, 1.0),
-            size=random.uniform(0.0, 1.0),
-            reproduction_threshold=random.uniform(0.0, 1.0),
-            mutation_rate=random.uniform(0.0, 1.0)
+            speed=rng.uniform(0.0, 1.0),
+            vision=rng.uniform(0.0, 1.0),
+            metabolism=rng.uniform(0.0, 1.0),
+            size=rng.uniform(0.0, 1.0),
+            reproduction_threshold=rng.uniform(0.0, 1.0),
+            mutation_rate=rng.uniform(0.0, 1.0),
         )

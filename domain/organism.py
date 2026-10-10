@@ -16,4 +16,5 @@ class Organism:
     genome: Genome
 
     parent_id: int | None = None
+    offspring_count: int = 0
     alive: bool = True

@@ -15,3 +15,6 @@ MAX_AGE = 1000
 EAT_DISTANCE = 5.0
 
 RANDOM_SEED = 42
+
+# Energy transferred from a parent to its offspring during reproduction.
+REPRODUCTION_ENERGY_COST = 30.0
