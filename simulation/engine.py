@@ -2,7 +2,7 @@ from brains.rule_brain import RuleBrain
 from domain.sensors import sense
 
 from simulation.physics import move_organism
-from simulation.interactions import eat_food, apply_metabolism
+from simulation.interactions import eat_food, apply_metabolism, respawn_food
 
 from evolution.reproduction import can_reproduce, create_offspring
 from evolution.mutation import mutate
@@ -157,6 +157,11 @@ class SimulationEngine:
         # --------------------------------------------------
         self.world.organisms.extend(pending_offspring)
 
+        # --------------------------------------------------
+        # 6. Replenish food eaten during this tick.
+        # --------------------------------------------------
+        respawn_food(self.world)
+
         # Advance simulation time exactly once.
         self.world.tick += 1
 
@@ -172,7 +177,7 @@ class SimulationEngine:
         )
 
         # --------------------------------------------------
-        # 6. Record simulation and evolutionary metrics.
+        # 7. Record simulation and evolutionary metrics.
         # --------------------------------------------------
         self.metrics.record(
             self.world,
