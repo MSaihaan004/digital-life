@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Digital Life | Artificial Ecosystem</title>
+
+    <link rel="stylesheet" href="style.css">
+    <script src="app.js" defer></script>
+</head>
+
+<body data-sprite-style="pixel">
+    <div class="app-container">
+
+        <!-- Header -->
+        <header class="topbar">
+            <div class="brand">
+                <div class="brand-icon">DL</div>
+
+                <div>
+                    <h1>Digital Life</h1>
+                    <p>Artificial Ecosystem Simulator</p>
+                </div>
+            </div>
+
+            <div class="topbar-right">
+                <div class="settings">
+                    <button id="settings-toggle" class="settings-toggle" aria-haspopup="true" aria-expanded="false"
+                        aria-controls="settings-panel">
+                        ⚙ Settings
+                    </button>
+
+                    <div id="settings-panel" class="settings-panel" hidden>
+                        <h3>Simulation Settings</h3>
+
+                        <label for="ticks-per-second-input">Ticks per second</label>
+
+                        <div class="settings-row">
+                            <input id="ticks-per-second-input" type="number" min="0.5" max="60" step="0.5" value="2"
+                                aria-describedby="settings-status" />
+                            <button id="ticks-apply-button" type="button">Apply</button>
+                        </div>
+
+                        <input id="ticks-per-second-slider" type="range" min="0.5" max="60" step="0.5" value="2"
+                            aria-label="Ticks per second slider" />
+
+                        <p id="settings-status" class="settings-status" role="status" aria-live="polite"></p>
+                        <p class="settings-hint">Range 0.5 – 60 ticks/sec. Controls the entire simulation speed.</p>
+
+                        <label for="sprite-style-select" class="sprite-label">Sprite style</label>
+                        <select id="sprite-style-select" aria-describedby="sprite-style-hint">
+                            <option value="dots">Classic dots</option>
+                            <option value="cells">Lab cells</option>
+                            <option value="pixel">Pixel followers</option>
+                            <option value="amiibo">Amiibo figures</option>
+                        </select>
+                        <p id="sprite-style-hint" class="settings-hint" role="status" aria-live="polite"></p>
+                    </div>
+                </div>
+
+                <div class="connection-status">
+                    <span id="connection-indicator" class="status-dot"></span>
+                    <span id="connection-text">Connecting to simulation...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard -->
+        <main class="dashboard">
+
+            <!-- Ecosystem Section -->
+            <section class="ecosystem-section">
+
+                <div class="section-header">
+                    <div>
+                        <h2>Living World</h2>
+                        <p>Observe your artificial ecosystem</p>
+                    </div>
+
+                    <div class="tick-display">
+                        <span>SIMULATION TICK</span>
+                        <strong id="simulation-tick">—</strong>
+                    </div>
+                </div>
+
+                <!-- Canvas will display the real Python simulation -->
+                <div class="world-container">
+                    <canvas id="ecosystem-canvas" aria-label="Two-dimensional artificial ecosystem"></canvas>
+
+                    <div id="world-loading" class="world-overlay">
+                        <p>Connecting to the ecosystem...</p>
+                    </div>
+                </div>
+
+                <!-- World Legend -->
+                <div class="world-legend">
+                    <div class="legend-item">
+                        <span class="legend-dot organism-dot" aria-hidden="true"></span>
+                        Living organism
+                    </div>
+
+                    <div class="legend-item">
+                        <span class="legend-dot food-dot" aria-hidden="true"></span>
+                        Food pellet
+                    </div>
+
+                    <div class="legend-item">
+                        <span class="legend-dot dead-dot" aria-hidden="true"></span>
+                        Dead organism
+                    </div>
+                </div>
+
+            </section>
+
+            <!-- Statistics Sidebar -->
+            <aside class="sidebar">
+
+                <section class="panel">
+                    <div class="panel-heading">
+                        <h2>Population</h2>
+                        <span class="panel-icon">◉</span>
+                    </div>
+
+                    <div class="primary-stat">
+                        <span id="living-population">—</span>
+                        <span class="stat-label">Living organisms</span>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>Total organisms</span>
+                        <strong id="total-organisms">—</strong>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>Dead organisms</span>
+                        <strong id="dead-population">—</strong>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-heading">
+                        <h2>Environment</h2>
+                        <span class="panel-icon">◇</span>
+                    </div>
+
+                    <div class="primary-stat">
+                        <span id="food-remaining">—</span>
+                        <span class="stat-label">Food remaining</span>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>World width</span>
+                        <strong id="world-width">—</strong>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>World height</span>
+                        <strong id="world-height">—</strong>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-heading">
+                        <h2>Average Vitality</h2>
+                        <span class="panel-icon">♡</span>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>Energy</span>
+                        <strong id="average-energy">—</strong>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>Health</span>
+                        <strong id="average-health">—</strong>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>Age</span>
+                        <strong id="average-age">—</strong>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>Metabolism</span>
+                        <strong id="average-metabolism">—</strong>
+                    </div>
+                </section>
+
+            </aside>
+
+            <!-- Organism Inspector -->
+            <section class="inspector panel">
+                <div class="panel-heading">
+                    <div>
+                        <h2>Organism Inspector</h2>
+                        <p>Select an organism in the world to inspect it.</p>
+                    </div>
+
+                    <span id="selected-organism-id" class="organism-badge">
+                        No selection
+                    </span>
+                </div>
+
+                <div id="inspector-empty" class="inspector-empty">
+                    <p>No organism selected.</p>
+                    <span>Click an organism in the ecosystem to view its data.</span>
+                </div>
+
+                <div id="inspector-details" class="inspector-details" hidden>
+
+                    <div class="inspector-group">
+                        <h3>Vital Statistics</h3>
+
+                        <div class="inspector-grid">
+                            <div class="detail-item">
+                                <span>Energy</span>
+                                <strong id="organism-energy">—</strong>
+                            </div>
+
+                            <div class="detail-item">
+                                <span>Health</span>
+                                <strong id="organism-health">—</strong>
+                            </div>
+
+                            <div class="detail-item">
+                                <span>Age</span>
+                                <strong id="organism-age">—</strong>
+                            </div>
+
+                            <div class="detail-item">
+                                <span>Generation</span>
+                                <strong id="organism-generation">—</strong>
+                            </div>
+
+                            <div class="detail-item">
+                                <span>Parent ID</span>
+                                <strong id="organism-parent">—</strong>
+                            </div>
+
+                            <div class="detail-item">
+                                <span>Offspring</span>
+                                <strong id="organism-offspring">—</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="inspector-group">
+                        <h3>Genome</h3>
+
+                        <div class="inspector-grid">
+                            <div class="detail-item">
+                                <span>Speed</span>
+                                <strong id="genome-speed">—</strong>
+                            </div>
+
+                            <div class="detail-item">
+                                <span>Vision</span>
+                                <strong id="genome-vision">—</strong>
+                            </div>
+
+                            <div class="detail-item">
+                                <span>Metabolism</span>
+                                <strong id="genome-metabolism">—</strong>
+                            </div>
+
+                            <div class="detail-item">
+                                <span>Size</span>
+                                <strong id="genome-size">—</strong>
+                            </div>
+
+                            <div class="detail-item">
+                                <span>Reproduction threshold</span>
+                                <strong id="genome-reproduction">—</strong>
+                            </div>
+
+                            <div class="detail-item">
+                                <span>Mutation rate</span>
+                                <strong id="genome-mutation">—</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>Digital Life</span>
+            <span>Python Simulation Engine · Read-only Dashboard</span>
+        </footer>
+
+    </div>
+</body>
+
+</html>
