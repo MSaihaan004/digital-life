@@ -8,6 +8,13 @@
 
 const API_URL = "http://127.0.0.1:8000/simulation/state";
 const CONFIG_URL = "http://127.0.0.1:8000/simulation/config";
+const STATUS_URL = "http://127.0.0.1:8000/simulation/status";
+const HISTORY_URL = "http://127.0.0.1:8000/simulation/metrics/history?limit=120";
+const ORGANISM_URL = "http://127.0.0.1:8000/simulation/organisms";
+const PAUSE_URL = "http://127.0.0.1:8000/simulation/pause";
+const RESUME_URL = "http://127.0.0.1:8000/simulation/resume";
+const STEP_URL = "http://127.0.0.1:8000/simulation/step";
+const RESET_URL = "http://127.0.0.1:8000/simulation/reset";
 
 const canvas = document.getElementById("ecosystem-canvas");
 const ctx = canvas.getContext("2d");
@@ -34,6 +41,26 @@ let selectedOrganismId = null;
 let isFetching = false;
 let consecutiveFailures = 0;
 let hasInitializedCanvas = false;
+
+/* Request sequencing: stale responses never overwrite newer state. */
+let stateRequestId = 0;
+let lastAppliedRequestId = 0;
+
+/* Status + history polling (independent from state polling). */
+let isStatusFetching = false;
+let isHistoryFetching = false;
+let statePollCount = 0;
+let lastHistoryTick = null;
+
+/* Control-request guards: one operation of each kind at a time. */
+let controlBusy = {
+    pause: false,
+    resume: false,
+    step: false,
+    reset: false,
+};
+
+let lastBackendStatus = null;
 
 let canvasWidth = 800;
 let canvasHeight = 600;
@@ -110,6 +137,289 @@ function setLoadingMessage(message) {
 
 function hideLoadingMessage() {
     loadingOverlay.hidden = true;
+}
+
+
+/* =========================================
+   SIMULATION STATUS PANEL
+   Uses actual backend responses only.
+   ========================================= */
+
+function updateStatusPanel(status) {
+    if (!status || typeof status !== "object") {
+        return;
+    }
+
+    lastBackendStatus = status;
+
+    const simStatus = status.simulation_status
+        || (status.paused ? "paused" : null);
+
+    if (simStatus === "paused") {
+        setText("simulation-status", "Paused");
+    } else if (simStatus === "running") {
+        setText("simulation-status", "Running");
+    } else if (simStatus === "idle") {
+        setText("simulation-status", "Idle");
+    }
+
+    if (status.worker_alive === true) {
+        setText("worker-health", "Healthy");
+    } else if (status.worker_alive === false) {
+        setText("worker-health", "Stopped");
+    }
+
+    if (Number.isFinite(Number(status.ticks_per_second))) {
+        setText("tick-rate", `${Number(status.ticks_per_second)}/s`);
+    }
+
+    if (status.last_tick === null
+        || status.last_tick === undefined) {
+        setText("last-tick", "—");
+    } else {
+        setText("last-tick", formatInteger(status.last_tick));
+    }
+
+    const workerError = document.getElementById("worker-error");
+
+    if (workerError) {
+        if (typeof status.last_error === "string"
+            && status.last_error.length > 0) {
+            workerError.textContent = `Worker error: ${status.last_error}`;
+            workerError.hidden = false;
+        } else {
+            workerError.textContent = "";
+            workerError.hidden = true;
+        }
+    }
+}
+
+function markDataFreshness(isStale) {
+    if (isStale) {
+        setText("data-freshness", "Stale");
+    } else if (latestState) {
+        setText("data-freshness", "Live");
+    } else {
+        setText("data-freshness", "—");
+    }
+}
+
+
+/* =========================================
+   SIMULATION CONTROLS
+   The browser never advances the simulation;
+   every button delegates to a backend endpoint.
+   ========================================= */
+
+function getControlElements() {
+    return {
+        pauseButton: document.getElementById("pause-button"),
+        resumeButton: document.getElementById("resume-button"),
+        stepButton: document.getElementById("step-button"),
+        resetButton: document.getElementById("reset-button"),
+        status: document.getElementById("control-status"),
+        error: document.getElementById("control-error"),
+    };
+}
+
+function setControlStatus(message) {
+    const { status } = getControlElements();
+
+    if (status) {
+        status.textContent = message || "";
+    }
+}
+
+function setControlError(message) {
+    const { error } = getControlElements();
+
+    if (!error) {
+        return;
+    }
+
+    if (!message) {
+        error.textContent = "";
+        error.hidden = true;
+        return;
+    }
+
+    error.textContent = message;
+    error.hidden = false;
+}
+
+function setControlsBusy(busy) {
+    const {
+        pauseButton,
+        resumeButton,
+        stepButton,
+        resetButton,
+    } = getControlElements();
+
+    for (const button of [pauseButton, resumeButton, stepButton, resetButton]) {
+        if (button) {
+            button.disabled = busy;
+        }
+    }
+}
+
+function controlErrorMessage(error, fallback) {
+    if (error && typeof error.message === "string"
+        && error.message.length > 0
+        && error.message !== "Failed to fetch") {
+        return error.message;
+    }
+
+    return fallback;
+}
+
+async function postControl(url, kind, workingMessage, successMessage) {
+    if (controlBusy[kind]) {
+        return false;
+    }
+
+    controlBusy[kind] = true;
+    setControlsBusy(true);
+    setControlError(null);
+    setControlStatus(workingMessage);
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            cache: "no-store",
+        });
+
+        if (!response.ok) {
+            let detail = `Request failed with HTTP ${response.status}.`;
+
+            try {
+                const errorBody = await response.json();
+
+                if (typeof errorBody.detail === "string") {
+                    detail = errorBody.detail;
+                }
+            } catch {
+                // Keep the HTTP status message.
+            }
+
+            if (response.status === 409) {
+                setControlError(
+                    "Single-step needs a paused simulation. "
+                    + "Pause first, then step once. "
+                    + `(${detail})`
+                );
+            } else {
+                setControlError(detail);
+            }
+
+            setControlStatus("");
+            return false;
+        }
+
+        const result = await response.json();
+
+        updateStatusPanel(result.status || result);
+        setControlStatus(successMessage);
+        await refreshStateNow();
+
+        return true;
+    } catch (error) {
+        console.error(`Control request failed (${kind}):`, error);
+        setControlError(controlErrorMessage(
+            error,
+            "Could not reach the backend. The last valid state is still shown."
+        ));
+        setControlStatus("");
+        return false;
+    } finally {
+        controlBusy[kind] = false;
+        setControlsBusy(false);
+    }
+}
+
+async function refreshStateNow() {
+    statePollCount += 1;
+    await fetchSimulationState();
+    await fetchSimulationStatus();
+}
+
+function initializeControls() {
+    const {
+        pauseButton,
+        resumeButton,
+        stepButton,
+        resetButton,
+    } = getControlElements();
+
+    if (!pauseButton || !resumeButton || !stepButton || !resetButton) {
+        return;
+    }
+
+    pauseButton.addEventListener("click", () => {
+        postControl(
+            PAUSE_URL,
+            "pause",
+            "Pausing…",
+            "Simulation paused. Ticks are no longer advancing."
+        );
+    });
+
+    resumeButton.addEventListener("click", () => {
+        postControl(
+            RESUME_URL,
+            "resume",
+            "Resuming…",
+            "Simulation resumed."
+        );
+    });
+
+    stepButton.addEventListener("click", () => {
+        postControl(
+            STEP_URL,
+            "step",
+            "Advancing one tick…",
+            "Advanced exactly one tick."
+        );
+    });
+
+    resetButton.addEventListener("click", () => {
+        postControl(
+            RESET_URL,
+            "reset",
+            "Resetting…",
+            "Simulation reset to its configured initial state."
+        );
+    });
+}
+
+
+/* =========================================
+   STATUS POLLING (independent cadence)
+   ========================================= */
+
+async function fetchSimulationStatus() {
+    if (isStatusFetching) {
+        return;
+    }
+
+    isStatusFetching = true;
+
+    try {
+        const response = await fetch(STATUS_URL, {
+            method: "GET",
+            cache: "no-store",
+        });
+
+        if (!response.ok) {
+            throw new Error(`Status API returned HTTP ${response.status}.`);
+        }
+
+        updateStatusPanel(await response.json());
+    } catch (error) {
+        // Status is best-effort; the state poll owns connection errors.
+        console.error("Failed to fetch simulation status:", error);
+    } finally {
+        isStatusFetching = false;
+    }
 }
 
 
@@ -1430,6 +1740,19 @@ function updateOrganismInspector() {
         `Organism #${organism.id}`
     );
 
+    const isAlive = organism.alive && organism.health > 0;
+    setText("organism-status", isAlive ? "Alive" : "Dead");
+
+    if (Number.isFinite(Number(organism.x))
+        && Number.isFinite(Number(organism.y))) {
+        setText(
+            "organism-position",
+            `(${formatNumber(organism.x, 1)}, ${formatNumber(organism.y, 1)})`
+        );
+    } else {
+        setText("organism-position", "—");
+    }
+
     setText("organism-energy", formatNumber(organism.energy));
     setText("organism-health", formatNumber(organism.health));
     setText("organism-age", formatInteger(organism.age));
@@ -1465,6 +1788,55 @@ function updateOrganismInspector() {
         "genome-mutation",
         formatNumber(genome.mutation_rate)
     );
+
+    if (latestState && Number.isFinite(Number(latestState.tick))) {
+        setText("inspector-tick", formatInteger(latestState.tick));
+    } else {
+        setText("inspector-tick", "—");
+    }
+
+    verifySelectedOrganism(organism.id);
+}
+
+
+/* =========================================
+   ORGANISM DETAIL VERIFICATION
+   Confirms the selection against the backend
+   without treating cache as truth.
+   ========================================= */
+
+async function verifySelectedOrganism(organismId) {
+    const errorElement = document.getElementById("inspector-error");
+
+    try {
+        const response = await fetch(
+            `${ORGANISM_URL}/${organismId}`,
+            { method: "GET", cache: "no-store" }
+        );
+
+        if (response.status === 404) {
+            if (errorElement) {
+                errorElement.textContent =
+                    "This organism is no longer in the backend state. "
+                    + "Shown values are from the last received snapshot.";
+                errorElement.hidden = false;
+            }
+
+            return;
+        }
+
+        if (!response.ok) {
+            throw new Error(`Organism API returned HTTP ${response.status}.`);
+        }
+
+        if (errorElement) {
+            errorElement.textContent = "";
+            errorElement.hidden = true;
+        }
+    } catch (error) {
+        /* Best-effort only: snapshot data stays visible. */
+        console.error("Failed to verify selected organism:", error);
+    }
 }
 
 
@@ -1802,6 +2174,215 @@ function initializeSettings() {
 
 
 /* =========================================
+   ANALYTICS CHARTS (backend metrics only)
+   No placeholder data: every point comes from
+   GET /simulation/metrics/history.
+   ========================================= */
+
+const CHART_SERIES = {
+    population: { color: "#55e6a5", label: "Living" },
+    births: { color: "#55e6a5", label: "Births" },
+    deaths: { color: "#ff7777", label: "Deaths" },
+    energy: { color: "#f4c95d", label: "Energy" },
+};
+
+function setAnalyticsStatus(message) {
+    const element = document.getElementById("analytics-status");
+
+    if (element) {
+        element.textContent = message || "";
+    }
+}
+
+function drawLineChart(canvasId, history, extractors) {
+    const canvas = document.getElementById(canvasId);
+
+    if (!canvas) {
+        return;
+    }
+
+    const width = canvas.clientWidth || 260;
+    const height = 150;
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
+
+    canvas.width = Math.round(width * pixelRatio);
+    canvas.height = Math.round(height * pixelRatio);
+
+    const g = canvas.getContext("2d");
+    g.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    g.clearRect(0, 0, width, height);
+
+    const padding = { left: 34, right: 8, top: 8, bottom: 18 };
+    const plotWidth = width - padding.left - padding.right;
+    const plotHeight = height - padding.top - padding.bottom;
+
+    const points = history
+        .map((snapshot) => ({
+            tick: Number(snapshot.tick),
+            values: extractors.map((extract) => {
+                const value = extract(snapshot);
+                return Number.isFinite(Number(value)) ? Number(value) : null;
+            }),
+        }))
+        .filter((point) => Number.isFinite(point.tick));
+
+    if (points.length === 0) {
+        g.fillStyle = "#607583";
+        g.font = "11px sans-serif";
+        g.fillText("No data yet", padding.left, height / 2);
+        return 0;
+    }
+
+    let maxValue = 0;
+
+    for (const point of points) {
+        for (const value of point.values) {
+            if (value !== null && value > maxValue) {
+                maxValue = value;
+            }
+        }
+    }
+
+    if (maxValue <= 0) {
+        maxValue = 1;
+    }
+
+    const minTick = points[0].tick;
+    const maxTick = points[points.length - 1].tick;
+    const tickSpan = Math.max(maxTick - minTick, 1);
+
+    /* Axes. */
+    g.strokeStyle = "rgba(130, 160, 175, 0.25)";
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(padding.left, padding.top);
+    g.lineTo(padding.left, padding.top + plotHeight);
+    g.lineTo(padding.left + plotWidth, padding.top + plotHeight);
+    g.stroke();
+
+    /* Y max + x tick labels. */
+    g.fillStyle = "#607583";
+    g.font = "10px sans-serif";
+    g.fillText(formatNumber(maxValue, 1), 2, padding.top + 9);
+    g.fillText(formatInteger(minTick), padding.left, height - 4);
+    g.fillText(
+        formatInteger(maxTick),
+        padding.left + plotWidth - 28,
+        height - 4
+    );
+
+    extractors.forEach((extract, seriesIndex) => {
+        const color = (CHART_SERIES[extract.key] || {}).color || "#55e6a5";
+
+        g.strokeStyle = color;
+        g.lineWidth = 1.6;
+        g.beginPath();
+
+        let started = false;
+
+        for (const point of points) {
+            const value = point.values[seriesIndex];
+
+            if (value === null) {
+                started = false;
+                continue;
+            }
+
+            const x = padding.left
+                + ((point.tick - minTick) / tickSpan) * plotWidth;
+            const y = padding.top + plotHeight
+                - (value / maxValue) * plotHeight;
+
+            if (!started) {
+                g.moveTo(x, y);
+                started = true;
+            } else {
+                g.lineTo(x, y);
+            }
+        }
+
+        g.stroke();
+    });
+
+    return points.length;
+}
+
+function chartExtractor(key) {
+    return Object.assign(
+        (snapshot) => snapshot[key],
+        { key }
+    );
+}
+
+async function fetchMetricsHistory() {
+    if (isHistoryFetching) {
+        return;
+    }
+
+    isHistoryFetching = true;
+
+    try {
+        const response = await fetch(HISTORY_URL, {
+            method: "GET",
+            cache: "no-store",
+        });
+
+        if (!response.ok) {
+            throw new Error(`Metrics API returned HTTP ${response.status}.`);
+        }
+
+        const body = await response.json();
+        const history = Array.isArray(body.history) ? body.history : [];
+
+        if (history.length === 0) {
+            setAnalyticsStatus("No metrics recorded yet.");
+            return;
+        }
+
+        const traitSelect = document.getElementById("trait-select");
+        const traitKey = traitSelect ? traitSelect.value : "average_metabolism";
+        const traitOption = traitSelect
+            ? traitSelect.options[traitSelect.selectedIndex]
+            : null;
+
+        const caption = document.getElementById("trait-chart-caption");
+
+        if (caption && traitOption) {
+            caption.textContent = `${traitOption.text} (per tick)`;
+        }
+
+        const drawn = [
+            drawLineChart("chart-population", history, [
+                chartExtractor("living_population"),
+            ]),
+            drawLineChart("chart-vitality", history, [
+                chartExtractor("births"),
+                chartExtractor("deaths"),
+            ]),
+            drawLineChart("chart-energy", history, [
+                chartExtractor("average_energy"),
+            ]),
+            drawLineChart("chart-trait", history, [
+                chartExtractor(traitKey),
+            ]),
+        ];
+
+        const lastTick = history[history.length - 1].tick;
+        lastHistoryTick = lastTick;
+
+        setAnalyticsStatus(
+            `Showing ${drawn[0]} recorded tick(s), through tick ${lastTick}.`
+        );
+    } catch (error) {
+        console.error("Failed to fetch metrics history:", error);
+        setAnalyticsStatus("Metrics are temporarily unavailable.");
+    } finally {
+        isHistoryFetching = false;
+    }
+}
+
+
+/* =========================================
    FETCH SIMULATION STATE
    ========================================= */
 
@@ -1816,6 +2397,7 @@ async function fetchSimulationState() {
     }
 
     isFetching = true;
+    const requestId = ++stateRequestId;
 
     try {
         const response = await fetch(API_URL, {
@@ -1823,19 +2405,56 @@ async function fetchSimulationState() {
             cache: "no-store"
         });
 
+        let payload;
+
+        try {
+            payload = await response.json();
+        } catch {
+            throw new Error("The API returned malformed data.");
+        }
+
         if (!response.ok) {
             throw new Error(`API returned HTTP ${response.status}.`);
         }
 
-        const state = validateState(await response.json());
+        const state = validateState(payload);
 
+        /* Ignore stale responses that arrive out of order. */
+        if (requestId < lastAppliedRequestId) {
+            return;
+        }
+
+        lastAppliedRequestId = requestId;
         latestState = state;
         consecutiveFailures = 0;
 
-        setConnectionStatus(true, "Backend connected");
+        const paused = state.paused === true;
+        const simStatus = state.simulation_status;
+
+        if (paused || simStatus === "paused") {
+            setConnectionStatus(true, "Backend connected · Paused");
+        } else {
+            setConnectionStatus(true, "Backend connected");
+        }
+
         hideLoadingMessage();
+        markDataFreshness(false);
 
         updateStatistics(state);
+        updateStatusPanel({
+            simulation_status: simStatus,
+            paused,
+            ticks_per_second: state.ticks_per_second,
+            living_population: state.population,
+            total_organisms: state.total_organisms,
+            last_tick: state.tick,
+            worker_alive: lastBackendStatus
+                ? lastBackendStatus.worker_alive
+                : undefined,
+            last_error: lastBackendStatus
+                ? lastBackendStatus.last_error
+                : undefined,
+        });
 
         /*
          * Keep the settings inputs in sync if the backend
@@ -1869,21 +2488,42 @@ async function fetchSimulationState() {
 
         updateOrganismInspector();
 
+        /* Charts refresh on a slower cadence than state polling. */
+        statePollCount += 1;
+
+        if (statePollCount % 5 === 0 || lastHistoryTick === null) {
+            fetchMetricsHistory();
+        }
+
     } catch (error) {
         consecutiveFailures += 1;
 
         console.error("Failed to fetch simulation state:", error);
 
-        setConnectionStatus(false, "Backend disconnected");
-
         if (!latestState) {
+            setConnectionStatus(false, "Backend disconnected");
             setLoadingMessage(
                 "Cannot connect to Digital Life. Start the FastAPI server and retry."
             );
-        } else if (consecutiveFailures >= 3) {
-            setLoadingMessage(
-                "Connection lost. Showing the last successfully received state."
+        } else {
+            /* Paused is a backend state, not a connection failure. */
+            const wasPaused = lastBackendStatus
+                && lastBackendStatus.paused === true;
+
+            setConnectionStatus(
+                false,
+                wasPaused
+                    ? "Backend unreachable · Paused"
+                    : "Backend disconnected · Showing last state"
             );
+
+            if (consecutiveFailures >= 3) {
+                setLoadingMessage(
+                    "Connection lost. Showing the last successfully received state."
+                );
+            }
+
+            markDataFreshness(true);
         }
 
     } finally {
@@ -1902,24 +2542,42 @@ function startDashboard() {
     setLoadingMessage("Connecting to the Python simulation...");
 
     initializeSettings();
+    initializeControls();
+
+    const traitSelect = document.getElementById("trait-select");
+
+    if (traitSelect) {
+        traitSelect.addEventListener("change", () => {
+            fetchMetricsHistory();
+        });
+    }
 
     /*
      * Fetch immediately, then periodically refresh
      * the displayed state.
      *
      * Polling does not advance the simulation.
+     * Status polling runs on a slower independent cadence.
      */
 
     fetchSimulationState();
+    fetchSimulationStatus();
+    fetchMetricsHistory();
 
     window.setInterval(
         fetchSimulationState,
         POLL_INTERVAL_MS
     );
 
+    window.setInterval(
+        fetchSimulationStatus,
+        POLL_INTERVAL_MS * 5
+    );
+
     window.addEventListener("resize", () => {
         if (latestState) {
             resizeCanvas();
+            fetchMetricsHistory();
         }
     });
 }

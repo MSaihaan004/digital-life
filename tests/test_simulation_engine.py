@@ -39,8 +39,12 @@ def test_no_eligible_parents_produce_no_offspring(monkeypatch):
 def test_at_most_one_offspring_per_tick(monkeypatch):
     """Multiple eligible organisms should produce at most one child."""
 
+    from types import SimpleNamespace
+
     world, rng = make_test_world()
     engine = SimulationEngine(world, rng=rng)
+    # Action-gated model: force REPRODUCE so eligibility matters.
+    engine.brain.decide = lambda sensor_data: SimpleNamespace(value="reproduce")
 
     monkeypatch.setattr(
         "simulation.engine.can_reproduce",
@@ -86,8 +90,12 @@ def test_engine_records_metrics():
 def test_engine_calls_parent_selection(monkeypatch):
     """The engine should use select_parent to choose a parent."""
 
+    from types import SimpleNamespace
+
     world, rng = make_test_world()
     engine = SimulationEngine(world, rng=rng)
+    # Action-gated model: force REPRODUCE so all eligible are candidates.
+    engine.brain.decide = lambda sensor_data: SimpleNamespace(value="reproduce")
 
     selected_parents = []
 

@@ -12,16 +12,20 @@ Rather than assuming that evolution always produces better organisms, Digital Li
 
 ## 📌 Project Status
 
-**Current milestone: Stage 3 — Evolutionary Mechanics and Experiments**
+**Current milestone: MVP — Simulation correctness, backend controls, dashboard integration, performance, and experiment reliability (Batches 1–5)**
 
-| Stage | Description | Status |
-| --- | --- | --- |
-| Stage 1 | Initial project foundation and digital organisms | ✅ Complete |
-| Stage 2 | Life cycle, aging, and death | ✅ Complete |
-| Stage 3 | Evolutionary mechanics and experimental analysis | ✅ Complete |
-| Stage 4 | Advanced evolutionary experiments and model improvements | 🔜 Planned |
+| Area | Status |
+| --- | --- |
+| Simulation engine and tick semantics | ✅ Stable |
+| Brain-action gating and health-based death | ✅ Implemented and tested |
+| Sensors (vision-limited, tie-stable) | ✅ Implemented and tested |
+| Backend worker lifecycle and controls | ✅ Implemented and tested |
+| Dashboard controls, status, charts | ✅ Implemented and tested |
+| Experiment output safety and metadata | ✅ Implemented and tested |
+| Benchmarks and deterministic replay | ✅ Implemented and tested |
+| Stage 4 (advanced evolution) | 🔜 Not implemented |
 
-The project currently includes an organism simulation, evolutionary mechanics, automated tests, reproducible experiments, and CSV-based experimental results.
+The project includes the organism simulation, evolutionary mechanics, a FastAPI backend with pause/resume/step/reset controls, a vanilla HTML/CSS/JS dashboard, automated Python tests, Playwright browser tests, reproducible benchmarks, and protected experiment outputs.
 
 ---
 
@@ -41,6 +45,44 @@ The project is designed to investigate these questions through simulation and me
 
 ---
 
+## 🏗️ Project Architecture
+
+```text
+digital-life/
+├── analytics/        # Reserved package (currently empty; metrics live in evolution/metrics.py)
+├── backend/
+│   ├── api.py                # FastAPI app: worker lifecycle, controls, status, state
+│   └── state_serializer.py   # Snapshot capture (under lock) + serialization (outside lock)
+├── brains/
+│   └── rule_brain.py         # Rule-based policy: MOVE / EAT / REPRODUCE / IDLE
+├── domain/
+│   ├── organism.py / genome.py / world.py / sensors.py / events.py
+├── evolution/
+│   ├── reproduction.py / mutation.py / selection.py / fitness.py
+│   ├── metrics.py    # Canonical per-tick metrics (living-only averages)
+│   └── exporter.py   # CSV export (overwrite-guarded, atomic)
+├── simulation/
+│   ├── engine.py         # Tick pipeline + optional phase instrumentation (off by default)
+│   ├── interactions.py / physics.py / randomness.py
+├── experiments/
+│   ├── run_metadata.py   # Shared output-safety helpers (unique run dirs, atomic writes)
+│   └── analyze_*.py / validate_evolution.py
+├── experiment_results/   # Committed historical outputs (never overwritten by reruns)
+├── benchmarks/
+│   └── bench_simulation.py   # Stdlib-only benchmark harness (fixed seeds)
+├── frontend/
+│   ├── index.html / style.css / app.js        # Dashboard (vanilla JS, canvas renderer)
+│   └── dashboard.spec.ts                      # Playwright browser tests
+├── tests/            # Python test suite
+├── config.py         # Configuration defaults + validate_config()
+├── app.py            # Standalone console demo (10 ticks, no backend)
+└── requirements.txt  # Runtime dependencies (fastapi, uvicorn)
+```
+
+Python is authoritative for all simulation state. The frontend only fetches and renders state; it never advances the simulation except through backend control endpoints.
+
+---
+
 ## 🌍 How the Simulation Works
 
 Digital Life models a population of organisms living in a shared environment.
@@ -49,311 +91,42 @@ Each organism has inherited traits and a life cycle. Organisms interact with the
 
 ### 1. Environment
 
-The simulated world contains organisms and food resources.
+The simulated world contains organisms and food resources, configured in `config.py`:
 
-The environment is configured using parameters such as:
+- World dimensions (`WORLD_WIDTH`, `WORLD_HEIGHT`)
+- Initial population and food (`INITIAL_POPULATION`, `INITIAL_FOOD`)
+- Energy parameters (`STARTING_ENERGY`, `MAX_ENERGY`, `FOOD_ENERGY`)
+- Food replenishment (`FOOD_TARGET_COUNT`, `FOOD_MAX_COUNT`, `FOOD_RESPAWN_PER_TICK`)
+- Maximum age (`MAX_AGE`), eat distance (`EAT_DISTANCE`)
+- Reproduction cost (`REPRODUCTION_ENERGY_COST`), tick rate bounds, `RANDOM_SEED`
 
-- World dimensions
-- Initial population
-- Initial food availability
-- Food interaction distance
-- Organism energy limits
-- Maximum age
+`config.validate_config()` checks defaults and relationships (for example, `STARTING_ENERGY <= MAX_ENERGY`) without changing any value.
 
-These parameters can be adjusted to investigate different simulation conditions.
+### 2. Tick pipeline (`simulation/engine.py`)
 
-### 2. Digital Organisms
+Each `step()` advances exactly one tick, in this fixed order:
 
-Each organism has a genome containing inherited traits.
+1. Snapshot pre-existing organisms (newborns wait until next tick).
+2. Per organism: liveness check → sense → brain decision → MOVE-only movement → one opportunistic eat → metabolism → age+1 → death check (`energy <= 0`, `health <= 0`, `age >= MAX_AGE`) → reproduction candidacy.
+3. At most one global reproduction via fitness-proportionate `select_parent`.
+4. Deferred offspring registration, food respawn, `tick += 1`, death accounting, one metrics snapshot.
 
-Organisms also have life-cycle properties, including energy, health, and age.
+### 3. Brain actions (`brains/rule_brain.py`)
 
-During simulation, organisms can:
+The rule-based policy returns `MOVE`, `EAT`, `REPRODUCE`, or `IDLE`:
 
-- Move through the environment.
-- Interact with food resources.
-- Consume energy.
-- Gain energy from food.
-- Age over time.
-- Reproduce when eligible.
-- Die when their survival conditions are no longer satisfied.
+- Only `MOVE` causes directed movement (existing physics path).
+- Food consumption is opportunistic and applied once per tick for every acting organism, regardless of action.
+- Reproduction candidacy requires **both** the `REPRODUCE` action **and** `can_reproduce()` eligibility (energy/threshold/health). A brain decision never bypasses eligibility.
+- Dead organisms (including `health <= 0`) never act, eat, or reproduce. Corpses are retained as historical records; metrics count only living organisms.
 
-### 3. Genome and Inherited Traits
+### 4. Sensors (`domain/sensors.py`)
 
-The genome represents characteristics that can be inherited by offspring.
+Food and organism sensing share the vision model (`vision * 200.0`); out-of-range targets are invisible, missing targets report `(inf, 0.0, 0.0)`, and equidistant ties resolve to the first in collection order. Sensing never mutates world state. Distance comparisons use squared distances internally with identical selection semantics (verified by equivalence tests).
 
-The evolutionary implementation includes mutation and reproduction mechanisms.
+### 5. Genome (`domain/genome.py`)
 
-The traits currently investigated include metabolism and other inherited characteristics represented by the simulation's genome.
-
-### 4. Reproduction
-
-Eligible organisms can produce offspring according to the simulation's reproduction rules.
-
-Reproduction transfers energy from a parent to its offspring, introducing an energetic cost to producing descendants.
-
-The current configuration includes:
-
-```python
-REPRODUCTION_ENERGY_COST = 30.0
-```
-
-### 5. Mutation
-
-Mutation introduces variation into inherited traits.
-
-This allows offspring to differ from their parents and provides variation for evolutionary experiments.
-
-### 6. Selection and Fitness
-
-The evolutionary system includes fitness evaluation and selection mechanisms.
-
-These components provide a framework for investigating how inherited characteristics relate to survival and reproductive outcomes.
-
-The project does not assume that every mutation is beneficial or that every experiment will produce an increasingly successful population.
-
----
-
-## 🧬 Stage 3: Evolutionary Mechanics
-
-Stage 3 extends the earlier life-cycle simulation with evolutionary mechanics and experimental analysis.
-
-### Implemented capabilities
-
-- Genome-based inherited traits
-- Mutation
-- Reproduction with an energy cost
-- Selection strategies
-- Fitness evaluation
-- Evolutionary metrics
-- Reproducible simulation runs
-- Simulation data export
-- Multi-seed experiments
-- Metabolism experiments
-- Energy-economy analysis
-- Automated tests for evolutionary behavior
-
-### Evolutionary experiment workflow
-
-The general experimental workflow is:
-
-1. Configure the simulation.
-2. Initialize a population.
-3. Run the simulation for a specified number of ticks.
-4. Record population and evolutionary metrics.
-5. Repeat the experiment with different random seeds.
-6. Export results to CSV.
-7. Compare results across experimental conditions.
-8. Investigate patterns and limitations.
-
-This workflow helps distinguish repeatable patterns from outcomes that may depend on a particular random seed.
-
----
-
-## 🔬 Experiments and Findings
-
-Stage 3 includes experiments investigating evolutionary outcomes, metabolism, and energy economics.
-
-The results described below come from the experiments conducted during Stage 3 development.
-
-### 1. Multi-Seed Evolution Analysis
-
-An experiment was conducted using 20 random seeds, from 42 through 61, with 500 simulation ticks per run.
-
-The analysis reported:
-
-| Metric | Result |
-| --- | ---: |
-| Mean total organisms recorded | 272.9 |
-| Mean living population | 41.0 |
-| Mean births | 172.9 |
-| Mean correlation between metabolism and survival | -0.5077 |
-| Standard deviation of the correlation | 0.0476 |
-
-The analysis found a negative relationship between metabolism and survival in the tested simulation conditions.
-
-This is an observed result for the current model, not a universal biological rule.
-
-### 2. Controlled Metabolism Experiment
-
-A controlled experiment compared five fixed metabolism values across ten random seeds, from 42 through 51, with 500 ticks per run.
-
-The reported average results were:
-
-| Metabolism | Mean living population | Mean births |
-| ---: | ---: | ---: |
-| 0.05 | 322.0 | 260.0 |
-| 0.20 | 15.2 | 209.7 |
-| 0.40 | 1.3 | 165.4 |
-| 0.60 | 0.4 | 132.0 |
-| 0.80 | 0.1 | 108.7 |
-
-Under these experimental conditions, higher metabolism was associated with substantially lower population survival and fewer births.
-
-This suggests that the current energy model strongly penalizes higher metabolism.
-
-Further investigation is needed before changing the model, because the results may depend on the interaction between energy consumption, food access, reproduction, and population dynamics.
-
-### 3. Energy-Economy Experiment
-
-An additional experiment investigated food acquisition, energy gained, metabolic energy consumed, and uneaten food.
-
-The experiment reported the following mean values:
-
-| Metabolism | Food events | Food energy gained | Metabolic energy consumed | Food left |
-| ---: | ---: | ---: | ---: | ---: |
-| 0.05 | 199.9 | 2536.94 | 6809.50 | 0.1 |
-| 0.20 | 199.3 | 3152.24 | 12926.80 | 0.7 |
-| 0.40 | 190.6 | 3561.06 | 13534.86 | 9.4 |
-| 0.60 | 174.1 | 3507.50 | 13500.94 | 25.9 |
-| 0.80 | 147.6 | 3052.90 | 13050.90 | 52.4 |
-
-The results suggest that food access and metabolic expenditure interact in ways that influence survival.
-
-Higher-metabolism conditions left more food uneaten on average, while organisms under those conditions consumed substantially more metabolic energy.
-
-This raises a useful research question:
-
-**Are high-metabolism organisms dying primarily because of energy expenditure, reduced food acquisition, or the interaction between these mechanisms?**
-
-Future experiments can investigate this question more precisely.
-
-### Scientific Interpretation
-
-These experiments are preliminary investigations of the current simulation.
-
-Their results should be interpreted within the model's assumptions and parameter settings.
-
-They do not establish universal biological laws, and further controlled experiments are needed to distinguish causal mechanisms.
-
----
-
-## 📊 Data and Analysis
-
-Experimental scripts and results are organized separately from the core simulation.
-
-### Experiment scripts
-
-The `experiments/` directory contains:
-
-| File | Purpose |
-| --- | --- |
-| `validate_evolution.py` | Validates evolutionary behavior under experimental conditions |
-| `analyze_evolution.py` | Analyzes evolutionary outcomes |
-| `analyze_multiple_seeds.py` | Compares results across multiple random seeds |
-| `analyze_metabolism.py` | Investigates the relationship between metabolism and population outcomes |
-| `analyze_energy_economy.py` | Examines food acquisition and energy expenditure |
-
-### Experimental results
-
-The `experiment_results/` directory contains CSV data generated during Stage 3.
-
-Examples include:
-
-- `seed_42.csv`
-- `seed_123.csv`
-- `seed_456.csv`
-- `individuals_seed_42.csv`
-- `multi_seed_summary.csv`
-- `metabolism_experiment.csv`
-- `energy_economy_summary.csv`
-- `energy_economy_timeseries.csv`
-
-These files preserve experimental outputs for later inspection, comparison, and analysis.
-
----
-
-## 🏗️ Project Structure
-
-The repository is organized into modules separating the environment, organisms, simulation mechanics, evolutionary behavior, analysis, experiments, and tests.
-
-```text
-digital-life/
-│
-├── analytics/
-│   ├── __init__.py
-│   └── metrics.py
-│
-├── brains/
-│   ├── __init__.py
-│   └── rule_brain.py
-│
-├── domain/
-│   ├── __init__.py
-│   ├── events.py
-│   ├── genome.py
-│   ├── organism.py
-│   ├── sensors.py
-│   └── world.py
-│
-├── evolution/
-│   ├── __init__.py
-│   ├── exporter.py
-│   ├── fitness.py
-│   ├── metrics.py
-│   ├── mutation.py
-│   ├── reproduction.py
-│   └── selection.py
-│
-├── simulation/
-│   ├── __init__.py
-│   ├── engine.py
-│   ├── interactions.py
-│   ├── physics.py
-│   ├── randomness.py
-│   └── rules.py
-│
-├── experiments/
-│   ├── validate_evolution.py
-│   ├── analyze_evolution.py
-│   ├── analyze_multiple_seeds.py
-│   ├── analyze_metabolism.py
-│   └── analyze_energy_economy.py
-│
-├── experiment_results/
-│   ├── seed_42.csv
-│   ├── seed_123.csv
-│   ├── seed_456.csv
-│   ├── individuals_seed_42.csv
-│   ├── multi_seed_summary.csv
-│   ├── metabolism_experiment.csv
-│   ├── energy_economy_summary.csv
-│   └── energy_economy_timeseries.csv
-│
-├── tests/
-│   ├── test_evolution_integration.py
-│   ├── test_exporter.py
-│   ├── test_fitness.py
-│   ├── test_genome.py
-│   ├── test_metrics.py
-│   ├── test_mutation.py
-│   ├── test_organism.py
-│   ├── test_reproducibility.py
-│   ├── test_reproduction.py
-│   ├── test_selection_strategy.py
-│   ├── test_simulation_engine.py
-│   └── test_world.py
-│
-├── app.py
-├── config.py
-├── requirements.txt
-├── .gitignore
-└── README.md
-```
-
-The tree describes the intended project organization. Individual files may evolve as the implementation grows.
-
----
-
-## ⚙️ Technology Stack
-
-- **Python** — Core simulation and evolutionary mechanics
-- **pytest** — Automated testing
-- **CSV** — Experimental data export and storage
-- **Git** — Version control
-- **GitHub** — Remote repository and project history
-
-The current simulation and analysis pipeline is implemented primarily in Python.
+Six normalized `[0, 1]` traits: `speed` (px/tick), `vision` (detection range), `metabolism` (flat energy/tick), `size` (display/metrics only — no behavioral effect), `reproduction_threshold` (energy gate), `mutation_rate` (per-gene probability). Mutation adds Gaussian noise (`mutation_strength=0.1`) and clips to range; parents are never modified.
 
 ---
 
@@ -361,9 +134,9 @@ The current simulation and analysis pipeline is implemented primarily in Python.
 
 ### Prerequisites
 
-Install Python and Git.
-
-The project has been developed and tested with Python 3.13.4.
+- Python 3.13 (developed and tested with Python 3.13.4) and Git.
+- For the Python test suite: `pytest`, plus `httpx` for backend API tests.
+- For browser tests: Node.js and Playwright browsers (see below).
 
 ### 1. Clone the repository
 
@@ -372,183 +145,148 @@ git clone https://github.com/MSaihaan004/digital-life.git
 cd digital-life
 ```
 
-### 2. Create a virtual environment
+### 2. Install dependencies
 
-On Windows PowerShell:
+```bash
+python -m pip install -r requirements.txt
+python -m pip install pytest httpx
+```
+
+`requirements.txt` covers runtime dependencies (`fastapi`, `uvicorn[standard]`). Test tools (`pytest`, `httpx`) are install-only and add no runtime coupling.
+
+### 3. Start the backend
+
+From the project root (PowerShell shown; use `PYTHONPATH=.` on other shells):
 
 ```powershell
-python -m venv .venv
+$env:PYTHONPATH="."
+python -m uvicorn backend.api:app --host 127.0.0.1 --port 8000
 ```
 
-Activate it:
+The background simulation worker starts with the application lifespan — importing the module alone never starts it. Health: `GET http://127.0.0.1:8000/health`.
 
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
+### 4. Start the frontend
 
-If PowerShell blocks script activation, you can use the Command Prompt activation script instead:
-
-```bat
-.venv\Scripts\activate.bat
-```
-
-### 3. Install testing dependencies
-
-The project currently uses pytest for its automated tests.
+Serve the static dashboard (new terminal, project root):
 
 ```bash
-python -m pip install pytest
+python -m http.server 8130 --directory frontend
 ```
 
-The repository's `requirements.txt` may be expanded as additional external dependencies are introduced.
+Open `http://127.0.0.1:8130/index.html`. The dashboard polls the backend at `http://127.0.0.1:8000` for state, status, and metrics history.
 
-### 4. Run the automated tests
+### 5. Console demo (no backend)
 
 ```bash
-python -m pytest -v
+python app.py
 ```
-
-During Stage 3 development, the complete test suite reported:
-
-**59 passed.**
-
-This records the result obtained during development; rerun the tests after making changes to verify the current state.
-
-### 5. Run an experiment
-
-From the project root, experiment scripts can be executed with Python.
-
-For example:
-
-```bash
-python experiments/analyze_evolution.py
-```
-
-Other scripts can be run similarly:
-
-```bash
-python experiments/analyze_multiple_seeds.py
-python experiments/analyze_metabolism.py
-python experiments/analyze_energy_economy.py
-```
-
-Some experiments may take longer because they run multiple simulations.
-
-Check each script's configuration before changing its parameters or rerunning it, particularly if you want to preserve existing experimental results.
 
 ---
 
-## 🧪 Testing Strategy
+## 🧪 Testing
 
-Automated tests help verify the behavior of the simulation and evolutionary components.
+### Python test suite
 
-The test suite covers areas including:
+```powershell
+$env:PYTHONPATH="."
+python -m pytest -q
+```
 
-- Genome behavior
-- Organism behavior
-- World mechanics
-- Mutation
-- Reproduction
-- Selection strategies
-- Fitness evaluation
-- Evolutionary metrics
-- Data export
-- Reproducibility
-- Simulation integration
+156 tests covering: tick ordering and one-tick contract, brain→action dispatch, sensor vision/ties/boundaries/purity, organism invariants, energy accounting (no double-apply), aging/death (energy/health/age), reproduction eligibility and accounting, mutation bounds/reproducibility, selection distribution, world registration and IDs, metrics-vs-state consistency, empty populations, backend lifecycle/controls/errors/concurrency, export correctness, output-safety guards, phase-timing determinism, and full-trajectory replay.
 
-Tests should be run whenever simulation mechanics or evolutionary rules are changed.
+### Playwright browser tests
 
-The goal is to preserve previously working behavior while introducing new capabilities.
+Prerequisites: Node.js with Playwright browsers installed. No repo dependencies are added; the runner uses `npx` cache and the config starts both servers automatically:
+
+```bash
+npx -y @playwright/test@1.64.0 test dashboard.spec.ts --reporter=list
+```
+
+12 tests: loading/connection, console cleanliness, pause/resume with tick freeze, single-step (+1 tick), 409 explanation while running, reset to tick 0, statistics rendering, organism selection + inspector, style persistence, metrics charts, responsive layout, and disconnect→stale→reconnect recovery.
+
+---
+
+## ⚙️ Backend API
+
+Worker lifecycle: import starts nothing; server startup starts one worker; `stop_worker()` joins cleanly; duplicate workers are refused.
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /health`, `GET /simulation/status` | Connection, running/paused, tick, tick rate, living population, worker health, last tick/error |
+| `GET /simulation/state` | Consistent snapshot (`?include_dead=false`, `?limit=N` supported; history never deleted) |
+| `GET /simulation/metrics/history?limit=N` | Most recent N per-tick metric snapshots (dashboard charts) |
+| `GET /simulation/organisms/{id}` | Living or historical organism by ID (404 when absent) |
+| `GET /simulation/config`, `PUT /simulation/config` | Tick-rate settings (validated, 422 on invalid) |
+| `POST /simulation/pause` | Idempotent pause; state and RNG preserved; remains inspectable |
+| `POST /simulation/resume` | Idempotent resume; never duplicates the worker |
+| `POST /simulation/step` | Exactly one tick; only while paused (409 otherwise) |
+| `POST /simulation/reset` | Fresh world/engine/metrics; same config unless `{"seed": N}`; paused flag preserved |
+
+Errors use structured HTTP statuses (422 validation, 409 step-while-running, 404 missing organism, 500 with server-side logging and `last_error` — stack traces never leak to clients).
+
+---
+
+## 📊 Benchmarks
+
+Stdlib-only harness with fixed seeds (nothing written to `experiment_results/`):
+
+```powershell
+$env:PYTHONPATH="."
+python benchmarks/bench_simulation.py --quick
+```
+
+Measures full-tick duration across scenarios (small/medium/large populations, low/high food, aged worlds with historical dead), instrumented phase timings of the real `step()` path (`act`, `reproduce`, `housekeeping`, `metrics` — disabled by default via `enable_phase_timing()`), serialization cost/size, and history-retrieval cost. Phase regions exclude per-tick setup, so phases may not sum to tick time; full-tick timings are the comparable series. No wall-clock thresholds exist in unit tests. Representative reading: medium workload ≈7ms/tick with `act` ≈98% of instrumented time.
+
+---
+
+## 🔬 Experiments and Outputs
+
+Scripts in `experiments/` (`validate_evolution`, `analyze_evolution`, `analyze_metabolism`, `analyze_energy_economy`, `analyze_multiple_seeds`) share `experiments/run_metadata.py` output-safety helpers.
+
+Output-safety policy:
+
+- Every invocation writes into a **unique run directory** (`experiment_results/<experiment>_YYYYMMDD_HHMMSS[_n]`), so committed results are never silently overwritten.
+- Explicit paths refuse to overwrite unless `overwrite=True` (`OutputExistsError` otherwise); concurrent same-path creation is atomic — one winner, the rest refused.
+- Writes are atomic (temp file + rename/link); CSV schemas and formats are unchanged.
+- Each run writes a `<experiment>_run_metadata.json` sidecar: seeds, ticks, full config snapshot + validation, code revision, per-run success/failure, and the actual output file paths (`output_files`, `output_file`, `metadata_file`).
+- Failed seeds are recorded with errors, banners print `COMPLETED WITH FAILURES`, and incomplete runs are never reported as fully successful.
+
+Example (small smoke run into a temp dir — never the full 20×500 in development):
+
+```powershell
+$env:PYTHONPATH="."
+python -c "from experiments import validate_evolution as v; v.main(output_dir='C:/Temp/dl_smoke', seeds=[42], ticks=10)"
+```
+
+Committed `experiment_results/*.csv` files are historical records; reruns create new run directories alongside them.
 
 ---
 
 ## 🔁 Reproducibility
 
-Randomness plays an important role in artificial-life simulations.
-
-Digital Life includes support for seeded experiments so that runs can be repeated under controlled conditions.
-
-Using multiple random seeds also helps investigate whether observed outcomes are consistent across different simulation runs.
-
-Reproducibility is important when evaluating evolutionary patterns and comparing alternative configurations.
-
----
-
-## 🛣️ Roadmap
-
-### Stage 1 — Foundation
-
-- Establish the Python project structure.
-- Create the initial simulation components.
-- Introduce digital organisms and their environment.
-
-**Status: Complete**
-
-### Stage 2 — Life Cycle
-
-- Implement organism aging.
-- Introduce death and life-cycle mechanics.
-- Establish the core simulation loop.
-
-**Status: Complete**
-
-### Stage 3 — Evolutionary Mechanics and Experiments
-
-- Implement inherited traits and mutation.
-- Add reproduction and selection.
-- Introduce fitness evaluation and evolutionary metrics.
-- Export simulation data.
-- Run reproducible experiments.
-- Investigate metabolism and energy economics.
-
-**Status: Complete**
-
-### Stage 4 — Deeper Evolutionary Investigation
-
-Potential next steps include:
-
-- Investigating the causes of high-metabolism mortality.
-- Separating energy expenditure from food-access effects in controlled experiments.
-- Improving the measurement of birth, survival, and death causes.
-- Comparing alternative selection strategies.
-- Evaluating evolutionary outcomes over longer simulations.
-- Improving experiment summaries and visualizations.
-
-**Status: Planned**
-
-### Future Directions
-
-Longer-term possibilities include:
-
-- More sophisticated organism behavior.
-- Additional inherited traits.
-- More complex environmental conditions.
-- Improved experimental analysis.
-- Visualization of population dynamics.
-- Interactive exploration of evolutionary outcomes.
-
-These are future possibilities, not claims about currently implemented functionality.
+Centralized RNG (`simulation/randomness.py`, seeded from `config.RANDOM_SEED`, applied at creation/reset only). Identical seed + configuration reproduces identical initial conditions and full trajectories (fingerprinted in `benchmarks/baseline_fingerprints.json` and asserted by replay tests). Sensor/eating optimizations were verified trajectory-identical.
 
 ---
 
 ## 🔐 Version Control
 
-Digital Life is maintained in Git and hosted on GitHub.
+Repository: <https://github.com/MSaihaan004/digital-life>
 
-Repository:
+Work proceeds on feature branches merged to preserve history. Generated artifacts (`__pycache__/`, `.pytest_cache/`, `test-results/`, `playwright-report/`, `.playwright-mcp/`) are git-ignored and must not be committed.
 
-<https://github.com/MSaihaan004/digital-life>
+---
 
-The repository history preserves the project's development milestones.
+## ⚠️ Known Limitations and Troubleshooting
 
-Current version tags include:
-
-- `v0.1.0` — Initial foundation
-- `v0.2.0` — Life cycle with aging and death
-
-Stage 3 evolutionary mechanics and experiments were subsequently committed to the `main` branch.
-
-Future development should continue in the existing repository to preserve the project history and avoid duplicate working copies.
+- `size` gene affects display/metrics only; `health` never depletes (enforced as a death condition only).
+- At most one birth per tick globally; corpses accumulate as historical records (by design; live views filter them).
+- `analytics/` package is reserved and currently empty — canonical metrics live in `evolution/metrics.py`.
+- In-memory metrics history is unbounded per session (required for experiments); dashboard requests page it with `limit`.
+- **Backend won't start:** ensure `PYTHONPATH` includes the project root (`PYTHONPATH=.`), port 8000 is free, and `fastapi`/`uvicorn` are installed.
+- **Dashboard shows disconnected:** start the backend first; the UI keeps the last valid state and recovers automatically.
+- **Step rejected (409):** pause the simulation before single-stepping — this is the API contract, not a bug.
+- **Experiment refuses to write:** an output already exists — use a new run directory (the default) or pass `overwrite=True` deliberately.
+- **Playwright failures:** ensure Node.js, Playwright browsers, and free ports 8000/8130; rerun with `--reporter=list` for per-test logs.
 
 ---
 

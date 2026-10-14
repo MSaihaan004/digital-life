@@ -6,7 +6,6 @@ compares initial and final genome averages, and compares runs
 using different random seeds.
 """
 
-import csv
 from pathlib import Path
 from statistics import mean
 
@@ -120,33 +119,26 @@ def calculate_population_statistics(world, engine, seed):
     return snapshot
 
 
-def save_csv(rows, output_path):
-    """Write experiment snapshots to a CSV file."""
+def save_csv(rows, output_path, overwrite=False):
+    """Write experiment snapshots to a CSV file.
+
+    Column names and formats are unchanged. Refuses to overwrite
+    an existing file unless ``overwrite`` was explicitly requested.
+    """
+
+    from experiments.run_metadata import write_csv_exclusive
 
     if not rows:
-        return
+        return None
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
+    return write_csv_exclusive(
+        Path(output_path), rows, list(rows[0].keys()),
+        overwrite=overwrite,
     )
 
-    with output_path.open(
-        "w",
-        newline="",
-        encoding="utf-8",
-    ) as file:
-        writer = csv.DictWriter(
-            file,
-            fieldnames=list(rows[0].keys()),
-        )
 
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def run_experiment(seed, ticks=DEFAULT_TICKS):
+def run_experiment(seed, ticks=DEFAULT_TICKS, output_path=None,
+                     overwrite=False):
     """Run one experiment and sample its state over time."""
 
     world, rng = create_initial_world(seed)
@@ -197,12 +189,13 @@ def run_experiment(seed, ticks=DEFAULT_TICKS):
         final_population
     )
 
-    output_path = (
-        Path("experiment_results")
-        / f"seed_{seed}.csv"
-    )
+    if output_path is None:
+        output_path = (
+            Path("experiment_results")
+            / f"seed_{seed}.csv"
+        )
 
-    save_csv(samples, output_path)
+    save_csv(samples, output_path, overwrite=overwrite)
 
     final_snapshot = samples[-1]
 
@@ -309,25 +302,80 @@ def print_comparison(results):
         )
 
 
-def main():
-    """Run the standard collection of experiments."""
+def main(output_dir=None, overwrite=False, seeds=None, ticks=None):
+    """Run the standard collection of experiments.
+
+    Each invocation writes per-seed CSVs into a unique run
+    directory so existing results are never silently overwritten.
+    Failures are recorded per seed and reported explicitly.
+    """
+
+    from experiments.run_metadata import (
+        build_run_metadata,
+        unique_run_dir,
+        write_metadata_sidecar,
+    )
+
+    seeds = list(DEFAULT_SEEDS if seeds is None else seeds)
+    ticks = DEFAULT_TICKS if ticks is None else ticks
+
+    if output_dir is None:
+        run_dir = unique_run_dir(
+            Path("experiment_results"), "validate_evolution"
+        )
+    else:
+        run_dir = Path(output_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
 
     results = []
+    run_statuses = []
 
-    for seed in DEFAULT_SEEDS:
-        results.append(
-            run_experiment(
-                seed=seed,
-                ticks=DEFAULT_TICKS,
+    for seed in seeds:
+        try:
+            results.append(
+                run_experiment(
+                    seed=seed,
+                    ticks=ticks,
+                    output_path=run_dir / f"seed_{seed}.csv",
+                    overwrite=overwrite,
+                )
             )
+            run_statuses.append({"seed": seed, "status": "success"})
+        except Exception as exc:
+            run_statuses.append(
+                {"seed": seed, "status": "failed", "error": str(exc)}
+            )
+            print(f"  Seed {seed} FAILED: {exc}")
+
+    metadata = build_run_metadata(
+        experiment_id="validate_evolution",
+        seeds=seeds,
+        ticks=ticks,
+        run_statuses=run_statuses,
+    )
+    sidecar = write_metadata_sidecar(run_dir, metadata, overwrite=overwrite)
+    metadata["extra"] = {
+        "output_files": [str(run_dir / f"seed_{seed}.csv") for seed in seeds],
+        "output_file": str(run_dir / f"seed_{seeds[0]}.csv") if seeds else None,
+        "metadata_file": str(sidecar),
+    }
+    write_metadata_sidecar(run_dir, metadata, overwrite=True)
+
+    print_comparison([r for r in results if r is not None])
+
+    if metadata["failed_runs"]:
+        print(
+            f"\nExperiment completed with failures "
+            f"({metadata['failed_runs']} failed). "
+            "Inspect the run metadata for details."
+        )
+    else:
+        print(
+            "\nAll experiments completed. "
+            f"Inspect {run_dir}/ to compare the CSV files."
         )
 
-    print_comparison(results)
-
-    print(
-        "\nAll experiments completed. "
-        "Inspect experiment_results/ to compare the CSV files."
-    )
+    return results, metadata
 
 
 if __name__ == "__main__":

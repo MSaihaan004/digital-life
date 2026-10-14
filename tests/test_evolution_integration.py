@@ -32,7 +32,13 @@ class IdleBrain:
         return SimpleNamespace(value="idle")
 
 
-def prepare_engine(monkeypatch, world):
+class ReproduceBrain:
+
+    def decide(self, sensor_data):
+        return SimpleNamespace(value="reproduce")
+
+
+def prepare_engine(monkeypatch, world, brain=None):
     """Create a predictable engine for integration tests."""
 
     monkeypatch.setattr(
@@ -54,7 +60,7 @@ def prepare_engine(monkeypatch, world):
     )
 
     engine = SimulationEngine(world)
-    engine.brain = IdleBrain()
+    engine.brain = brain if brain is not None else ReproduceBrain()
 
     return engine
 
@@ -158,6 +164,19 @@ def test_ineligible_organism_does_not_reproduce(monkeypatch):
     world.organisms.append(parent)
 
     engine = prepare_engine(monkeypatch, world)
+
+    engine.step()
+
+    assert len(world.organisms) == 1
+
+
+def test_idle_action_does_not_reproduce(monkeypatch):
+    """IDLE action must not yield reproduction candidacy (action-gated)."""
+    world = World()
+    parent = make_parent()
+    world.organisms.append(parent)
+
+    engine = prepare_engine(monkeypatch, world, brain=IdleBrain())
 
     engine.step()
 

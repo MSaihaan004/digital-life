@@ -9,7 +9,6 @@ Measures:
 - Individual organism records exported to CSV
 """
 
-import csv
 from math import sqrt
 from pathlib import Path
 from statistics import mean
@@ -126,18 +125,21 @@ def calculate_trait_averages(organisms):
     }
 
 
-def export_individual_records(organisms, seed):
-    """Export organism information to a CSV file."""
+def export_individual_records(organisms, seed, output_path=None,
+                              overwrite=False):
+    """Export organism information to a CSV file.
 
-    output_path = (
-        Path("experiment_results")
-        / f"individuals_seed_{seed}.csv"
-    )
+    Column names and formats are unchanged. Refuses to overwrite
+    an existing file unless ``overwrite`` was explicitly requested.
+    """
 
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    from experiments.run_metadata import write_csv_exclusive
+
+    if output_path is None:
+        output_path = (
+            Path("experiment_results")
+            / f"individuals_seed_{seed}.csv"
+        )
 
     fieldnames = [
         "organism_id",
@@ -154,39 +156,30 @@ def export_individual_records(organisms, seed):
         "mutation_rate",
     ]
 
-    with output_path.open(
-        "w",
-        newline="",
-        encoding="utf-8",
-    ) as file:
+    rows = []
 
-        writer = csv.DictWriter(
-            file,
-            fieldnames=fieldnames,
-        )
+    for organism in organisms:
 
-        writer.writeheader()
+        rows.append({
+            "organism_id": organism.organism_id,
+            "parent_id": organism.parent_id,
+            "generation": organism.generation,
+            "alive_at_end": organism.alive,
+            "age_at_end": organism.age,
+            "offspring_count": organism.offspring_count,
+            "speed": organism.genome.speed,
+            "vision": organism.genome.vision,
+            "metabolism": organism.genome.metabolism,
+            "size": organism.genome.size,
+            "reproduction_threshold": (
+                organism.genome.reproduction_threshold
+            ),
+            "mutation_rate": organism.genome.mutation_rate,
+        })
 
-        for organism in organisms:
-
-            writer.writerow({
-                "organism_id": organism.organism_id,
-                "parent_id": organism.parent_id,
-                "generation": organism.generation,
-                "alive_at_end": organism.alive,
-                "age_at_end": organism.age,
-                "offspring_count": organism.offspring_count,
-                "speed": organism.genome.speed,
-                "vision": organism.genome.vision,
-                "metabolism": organism.genome.metabolism,
-                "size": organism.genome.size,
-                "reproduction_threshold": (
-                    organism.genome.reproduction_threshold
-                ),
-                "mutation_rate": organism.genome.mutation_rate,
-            })
-
-    return output_path
+    return write_csv_exclusive(
+        output_path, rows, fieldnames, overwrite=overwrite
+    )
 
 
 def print_survival_comparison(living, dead):

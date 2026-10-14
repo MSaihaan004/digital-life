@@ -21,7 +21,6 @@ including for newly created offspring.
 Results are exported to experiment_results/.
 """
 
-import csv
 from pathlib import Path
 from statistics import mean, pstdev
 
@@ -247,18 +246,25 @@ def run_single_experiment(metabolism_value, seed):
 # CSV EXPORT
 # ---------------------------------------------------------
 
-def export_results(results):
-    """Save all individual experiment results to CSV."""
+def export_results(results, output_path=None, overwrite=False):
+    """Save all individual experiment results to CSV.
 
-    OUTPUT_DIRECTORY.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    Column names and formats are unchanged. Refuses to overwrite
+    an existing file unless ``overwrite`` was explicitly requested.
+    """
 
-    output_path = (
-        OUTPUT_DIRECTORY
-        / "metabolism_experiment.csv"
-    )
+    from experiments.run_metadata import write_csv_exclusive
+
+    if output_path is None:
+        OUTPUT_DIRECTORY.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        output_path = (
+            OUTPUT_DIRECTORY
+            / "metabolism_experiment.csv"
+        )
 
     if not results:
         raise ValueError(
@@ -267,21 +273,9 @@ def export_results(results):
 
     fieldnames = list(results[0].keys())
 
-    with output_path.open(
-        "w",
-        newline="",
-        encoding="utf-8",
-    ) as file:
-
-        writer = csv.DictWriter(
-            file,
-            fieldnames=fieldnames,
-        )
-
-        writer.writeheader()
-        writer.writerows(results)
-
-    return output_path
+    return write_csv_exclusive(
+        output_path, results, fieldnames, overwrite=overwrite
+    )
 
 
 # ---------------------------------------------------------
@@ -354,6 +348,13 @@ def print_condition_summary(all_results):
             condition_results,
             "living_population",
         )
+
+        if not living_values:
+            print(
+                f"{metabolism_value:>12.2f}"
+                f"{'no successful runs':>62}"
+            )
+            continue
 
         birth_values = get_numeric_values(
             condition_results,
@@ -461,8 +462,13 @@ def print_condition_summary(all_results):
 # MAIN
 # ---------------------------------------------------------
 
-def main():
-    """Run all metabolism conditions."""
+def main(output_dir=None, overwrite=False):
+    """Run all metabolism conditions.
+
+    Each invocation writes into a unique run directory so existing
+    results are never silently overwritten. Failures are recorded
+    per (metabolism, seed) run and reported explicitly.
+    """
 
     print("=" * 85)
     print("DIGITAL LIFE — CONTROLLED METABOLISM EXPERIMENT")
@@ -479,6 +485,7 @@ def main():
     )
 
     all_results = []
+    run_statuses = []
 
     for metabolism_value in METABOLISM_LEVELS:
 
@@ -491,23 +498,82 @@ def main():
 
         for seed in RANDOM_SEEDS:
 
-            result = run_single_experiment(
-                metabolism_value=metabolism_value,
-                seed=seed,
-            )
+            try:
+                result = run_single_experiment(
+                    metabolism_value=metabolism_value,
+                    seed=seed,
+                )
+            except Exception as exc:
+                run_statuses.append({
+                    "metabolism": metabolism_value,
+                    "seed": seed,
+                    "status": "failed",
+                    "error": str(exc),
+                })
+                print(f"  Seed {seed} FAILED: {exc}")
+                continue
 
             all_results.append(result)
+            run_statuses.append({
+                "metabolism": metabolism_value,
+                "seed": seed,
+                "status": "success",
+            })
 
-    output_path = export_results(all_results)
+    from experiments.run_metadata import (
+        build_run_metadata,
+        unique_run_dir,
+        write_metadata_sidecar,
+    )
+
+    if output_dir is None:
+        run_dir = unique_run_dir(OUTPUT_DIRECTORY, "metabolism_experiment")
+    else:
+        run_dir = Path(output_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+    metadata = build_run_metadata(
+        experiment_id="metabolism_experiment",
+        seeds=list(RANDOM_SEEDS),
+        ticks=SIMULATION_TICKS,
+        extra={
+            "metabolism_levels": list(METABOLISM_LEVELS),
+            "initial_population": INITIAL_POPULATION,
+            "initial_food": INITIAL_FOOD,
+        },
+        run_statuses=run_statuses,
+    )
+    sidecar = write_metadata_sidecar(run_dir, metadata, overwrite=overwrite)
+
+    output_path = export_results(
+        all_results, output_path=run_dir / "metabolism_experiment.csv",
+        overwrite=overwrite,
+    ) if all_results else None
+    metadata["extra"]["output_file"] = (
+        str(output_path) if output_path else None
+    )
+    metadata["extra"]["output_files"] = [
+        str(output_path) if output_path else None
+    ]
+    metadata["extra"]["metadata_file"] = str(sidecar)
+    write_metadata_sidecar(run_dir, metadata, overwrite=True)
 
     print_condition_summary(all_results)
 
     print("\n")
     print("=" * 85)
-    print("EXPERIMENT COMPLETED")
+    if metadata["failed_runs"]:
+        print("EXPERIMENT COMPLETED WITH FAILURES")
+    else:
+        print("EXPERIMENT COMPLETED")
     print("=" * 85)
     print(f"Completed runs: {len(all_results)}")
+    print(f"Successful runs: {metadata['successful_runs']}")
+    print(f"Failed runs: {metadata['failed_runs']}")
     print(f"Results saved to: {output_path}")
+    print(f"Run metadata saved to: {sidecar}")
+
+    return all_results, metadata
 
 
 if __name__ == "__main__":

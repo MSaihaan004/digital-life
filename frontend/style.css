@@ -765,8 +765,171 @@ body[data-sprite-style="amiibo"] .legend-dot {
 }
 
 /* =========================================
-   INTERACTION AND ACCESSIBILITY
+   SIMULATION CONTROLS
    ========================================= */
+
+.control-panel {
+    margin-top: 16px;
+    padding: 14px;
+
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+
+    background: var(--bg-panel);
+}
+
+.control-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.control-button {
+    padding: 8px 14px;
+
+    border: 1px solid rgba(85, 230, 165, 0.4);
+    border-radius: 8px;
+
+    background: var(--accent-glow);
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 12px;
+}
+
+.control-button:hover:not(:disabled) {
+    border-color: var(--accent);
+}
+
+.control-button:disabled {
+    opacity: 0.55;
+    cursor: wait;
+}
+
+.control-button-danger {
+    border-color: rgba(255, 119, 119, 0.45);
+    background: rgba(255, 119, 119, 0.08);
+    color: var(--danger);
+}
+
+.control-button:focus-visible,
+.settings-toggle:focus-visible,
+.settings-row button:focus-visible,
+.trait-select-label select:focus-visible,
+#ecosystem-canvas:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.control-status {
+    margin: 10px 0 0;
+    font-size: 12px;
+}
+
+.control-error,
+.worker-error,
+.inspector-error {
+    margin: 8px 0 0;
+    padding: 8px 10px;
+
+    border: 1px solid rgba(255, 119, 119, 0.45);
+    border-left-width: 4px;
+    border-radius: 8px;
+
+    background: rgba(255, 119, 119, 0.07);
+    color: var(--text-primary);
+    font-size: 12px;
+}
+
+.control-error::before,
+.worker-error::before,
+.inspector-error::before {
+    content: "⚠ ";
+    font-weight: 700;
+}
+
+.worker-error {
+    font-size: 11px;
+}
+
+.inspector-error {
+    margin-top: 14px;
+}
+
+/* =========================================
+   ANALYTICS / CHARTS
+   ========================================= */
+
+.analytics {
+    grid-column: 1 / -1;
+    margin-top: 2px;
+}
+
+.trait-select-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.trait-select-label select {
+    padding: 8px 10px;
+
+    border: 1px solid var(--border);
+    border-radius: 8px;
+
+    background: rgba(8, 15, 20, 0.6);
+    color: var(--text-primary);
+}
+
+.analytics-status {
+    margin: 0 0 12px;
+    font-size: 12px;
+}
+
+.charts-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.chart-item {
+    margin: 0;
+    min-width: 0;
+    padding: 12px;
+
+    border: 1px solid var(--border);
+    border-radius: 9px;
+
+    background: rgba(8, 15, 20, 0.45);
+}
+
+.chart-item figcaption {
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.chart-canvas {
+    display: block;
+    width: 100%;
+    height: 150px;
+}
+
+@media (max-width: 800px) {
+    .charts-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .analytics {
+        grid-column: 1;
+    }
+}
 
 #ecosystem-canvas:focus-visible {
     outline: 2px solid var(--accent);

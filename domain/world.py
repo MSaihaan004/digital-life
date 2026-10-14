@@ -56,10 +56,18 @@ class World:
 
     def spawn_organisms(self, count):
 
-        for i in range(count):
-            self.spawn_organism(
-                organism_id=i
+        # Allocate unique IDs above existing max (preserves uniqueness
+        # across repeated calls; previously reused 0..count-1).
+        next_id = (
+            max(
+                (o.organism_id for o in self.organisms),
+                default=-1,
             )
+            + 1
+        )
+        for _ in range(count):
+            self.spawn_organism(organism_id=next_id)
+            next_id += 1
 
     def spawn_food(self, count):
 

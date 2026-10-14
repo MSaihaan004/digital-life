@@ -457,15 +457,22 @@ def run_single_experiment(metabolism_value, seed):
 # CSV EXPORT
 # ---------------------------------------------------------
 
-def export_csv(rows, filename):
-    """Export rows to a CSV file."""
+def export_csv(rows, filename, output_path=None, overwrite=False):
+    """Export rows to a CSV file.
 
-    OUTPUT_DIRECTORY.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    Column names and formats are unchanged. Refuses to overwrite
+    an existing file unless ``overwrite`` was explicitly requested.
+    """
 
-    output_path = OUTPUT_DIRECTORY / filename
+    from experiments.run_metadata import write_csv_exclusive
+
+    if output_path is None:
+        OUTPUT_DIRECTORY.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        output_path = OUTPUT_DIRECTORY / filename
 
     if not rows:
         raise ValueError(
@@ -474,21 +481,9 @@ def export_csv(rows, filename):
 
     fieldnames = list(rows[0].keys())
 
-    with output_path.open(
-        "w",
-        newline="",
-        encoding="utf-8",
-    ) as file:
-
-        writer = csv.DictWriter(
-            file,
-            fieldnames=fieldnames,
-        )
-
-        writer.writeheader()
-        writer.writerows(rows)
-
-    return output_path
+    return write_csv_exclusive(
+        output_path, rows, fieldnames, overwrite=overwrite
+    )
 
 
 # ---------------------------------------------------------
@@ -592,8 +587,13 @@ def print_summary(rows):
 # MAIN
 # ---------------------------------------------------------
 
-def main():
-    """Run all energy-economy conditions."""
+def main(output_dir=None, overwrite=False):
+    """Run all energy-economy conditions.
+
+    Each invocation writes into a unique run directory so existing
+    results are never silently overwritten. Failures are recorded
+    per (metabolism, seed) run and reported explicitly.
+    """
 
     print("=" * 85)
     print("DIGITAL LIFE — ENERGY ECONOMY EXPERIMENT")
@@ -601,6 +601,7 @@ def main():
 
     all_results = []
     all_snapshots = []
+    run_statuses = []
 
     for metabolism_value in METABOLISM_LEVELS:
 
@@ -613,34 +614,94 @@ def main():
 
         for seed in RANDOM_SEEDS:
 
-            result, snapshots = run_single_experiment(
-                metabolism_value,
-                seed,
-            )
+            try:
+                result, snapshots = run_single_experiment(
+                    metabolism_value,
+                    seed,
+                )
+            except Exception as exc:
+                run_statuses.append({
+                    "metabolism": metabolism_value,
+                    "seed": seed,
+                    "status": "failed",
+                    "error": str(exc),
+                })
+                print(f"  Seed {seed} FAILED: {exc}")
+                continue
 
             all_results.append(result)
             all_snapshots.extend(snapshots)
+            run_statuses.append({
+                "metabolism": metabolism_value,
+                "seed": seed,
+                "status": "success",
+            })
+
+    from experiments.run_metadata import (
+        build_run_metadata,
+        unique_run_dir,
+        write_metadata_sidecar,
+    )
+
+    if output_dir is None:
+        run_dir = unique_run_dir(OUTPUT_DIRECTORY, "energy_economy")
+    else:
+        run_dir = Path(output_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+    metadata = build_run_metadata(
+        experiment_id="energy_economy",
+        seeds=list(RANDOM_SEEDS),
+        ticks=SIMULATION_TICKS,
+        extra={
+            "initial_population": INITIAL_POPULATION,
+            "initial_food": INITIAL_FOOD,
+            "food_energy": FOOD_ENERGY,
+        },
+        run_statuses=run_statuses,
+    )
+    sidecar = write_metadata_sidecar(run_dir, metadata, overwrite=overwrite)
 
     summary_path = export_csv(
         all_results,
         "energy_economy_summary.csv",
-    )
-
+        output_path=run_dir / "energy_economy_summary.csv",
+        overwrite=overwrite,
+    ) if all_results else None
     snapshots_path = export_csv(
         all_snapshots,
         "energy_economy_timeseries.csv",
+        output_path=run_dir / "energy_economy_timeseries.csv",
+        overwrite=overwrite,
+    ) if all_snapshots else None
+    metadata["extra"]["output_files"] = [
+        str(summary_path) if summary_path else None,
+        str(snapshots_path) if snapshots_path else None,
+    ]
+    metadata["extra"]["output_file"] = (
+        str(summary_path) if summary_path else None
     )
+    metadata["extra"]["metadata_file"] = str(sidecar)
+    write_metadata_sidecar(run_dir, metadata, overwrite=True)
 
     print_summary(all_results)
 
     print("\n")
     print("=" * 85)
-    print("ENERGY ECONOMY EXPERIMENT COMPLETED")
+    if metadata["failed_runs"]:
+        print("ENERGY ECONOMY EXPERIMENT COMPLETED WITH FAILURES")
+    else:
+        print("ENERGY ECONOMY EXPERIMENT COMPLETED")
     print("=" * 85)
     print(f"Completed runs: {len(all_results)}")
+    print(f"Successful runs: {metadata['successful_runs']}")
+    print(f"Failed runs: {metadata['failed_runs']}")
     print(f"Food energy constant: {FOOD_ENERGY}")
     print(f"Summary CSV: {summary_path}")
     print(f"Time-series CSV: {snapshots_path}")
+    print(f"Run metadata: {sidecar}")
+
+    return all_results, metadata
 
 
 if __name__ == "__main__":

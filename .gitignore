@@ -21,6 +21,11 @@ Thumbs.db
 .coverage
 htmlcov/
 
+# Browser test artifacts
+test-results/
+playwright-report/
+.playwright-mcp/
+
 # Local databases
 *.sqlite3
 

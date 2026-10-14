@@ -11,7 +11,6 @@ Runs independent simulations and compares:
 Results are exported to experiment_results/.
 """
 
-import csv
 from math import sqrt
 from pathlib import Path
 from statistics import mean, pstdev
@@ -335,18 +334,28 @@ def run_single_experiment(seed):
 # CSV EXPORT
 # ---------------------------------------------------------
 
-def export_results(results):
-    """Save individual-run measurements to CSV."""
+def export_results(results, output_path=None, overwrite=False):
+    """Save individual-run measurements to CSV.
 
-    OUTPUT_DIRECTORY.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    Column names and formats are unchanged. The write is atomic
+    (temporary file + rename) and refuses to overwrite an existing
+    file unless ``overwrite`` was explicitly requested.
+    """
 
-    output_path = (
-        OUTPUT_DIRECTORY
-        / "multi_seed_summary.csv"
-    )
+    from experiments.run_metadata import write_csv_exclusive
+
+    if output_path is None:
+        OUTPUT_DIRECTORY.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        output_path = (
+            OUTPUT_DIRECTORY
+            / "multi_seed_summary.csv"
+        )
+    else:
+        output_path = Path(output_path)
 
     if not results:
         raise ValueError(
@@ -355,21 +364,9 @@ def export_results(results):
 
     fieldnames = list(results[0].keys())
 
-    with output_path.open(
-        "w",
-        newline="",
-        encoding="utf-8",
-    ) as file:
-
-        writer = csv.DictWriter(
-            file,
-            fieldnames=fieldnames,
-        )
-
-        writer.writeheader()
-        writer.writerows(results)
-
-    return output_path
+    return write_csv_exclusive(
+        output_path, results, fieldnames, overwrite=overwrite
+    )
 
 
 # ---------------------------------------------------------
@@ -565,8 +562,38 @@ def print_cross_seed_summary(results):
 # MAIN
 # ---------------------------------------------------------
 
-def main():
-    """Run all experiments and export the results."""
+def run_seeds(seeds):
+    """Run one experiment per seed; return (results, run_statuses).
+
+    Successful runs append their measurement record; failed seeds
+    are recorded in ``run_statuses`` with their error and never
+    reported as successful.
+    """
+    results = []
+    run_statuses = []
+
+    for seed in seeds:
+        try:
+            result = run_single_experiment(seed)
+            results.append(result)
+            run_statuses.append({"seed": seed, "status": "success"})
+        except Exception as exc:
+            run_statuses.append(
+                {"seed": seed, "status": "failed", "error": str(exc)}
+            )
+            print(f"  Seed {seed} FAILED: {exc}")
+
+    return results, run_statuses
+
+
+def main(output_dir=None, overwrite=False):
+    """Run all experiments and export the results.
+
+    Each invocation writes to a unique run directory so existing
+    ``experiment_results`` files are never silently overwritten.
+    Pass an explicit ``output_dir`` (and ``overwrite=True`` to
+    reuse it) only for testing or deliberate replacement.
+    """
 
     print("=" * 85)
     print("DIGITAL LIFE — MULTI-SEED EVOLUTIONARY ANALYSIS")
@@ -581,22 +608,61 @@ def main():
         f"{RANDOM_SEEDS[0]}–{RANDOM_SEEDS[-1]}"
     )
 
-    results = []
+    results, run_statuses = run_seeds(RANDOM_SEEDS)
 
-    for seed in RANDOM_SEEDS:
-        result = run_single_experiment(seed)
-        results.append(result)
+    from experiments.run_metadata import (
+        build_run_metadata,
+        unique_run_dir,
+        write_metadata_sidecar,
+    )
 
-    output_path = export_results(results)
+    if output_dir is None:
+        run_dir = unique_run_dir(OUTPUT_DIRECTORY, "multi_seed_analysis")
+    else:
+        run_dir = Path(output_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+    metadata = build_run_metadata(
+        experiment_id="multi_seed_analysis",
+        seeds=RANDOM_SEEDS,
+        ticks=SIMULATION_TICKS,
+        extra={
+            "initial_population": INITIAL_POPULATION,
+            "initial_food": INITIAL_FOOD,
+        },
+        run_statuses=run_statuses,
+    )
+    sidecar = write_metadata_sidecar(run_dir, metadata, overwrite=overwrite)
+
+    output_path = None
+    if results:
+        output_path = export_results(
+            results, output_path=run_dir / "multi_seed_summary.csv",
+            overwrite=overwrite,
+        )
+        metadata["extra"]["output_file"] = str(output_path)
+    else:
+        metadata["extra"]["output_file"] = None
+    metadata["extra"]["output_files"] = [metadata["extra"]["output_file"]]
+    metadata["extra"]["metadata_file"] = str(sidecar)
+    write_metadata_sidecar(run_dir, metadata, overwrite=True)
 
     print_cross_seed_summary(results)
 
     print("\n")
     print("=" * 85)
-    print("EXPERIMENT COMPLETED")
+    if metadata["failed_runs"]:
+        print("EXPERIMENT COMPLETED WITH FAILURES")
+    else:
+        print("EXPERIMENT COMPLETED")
     print("=" * 85)
     print(f"Runs completed: {len(results)}")
+    print(f"Successful runs: {metadata['successful_runs']}")
+    print(f"Failed runs: {metadata['failed_runs']}")
     print(f"Results saved to: {output_path}")
+    print(f"Run metadata saved to: {sidecar}")
+
+    return results, metadata
 
 
 if __name__ == "__main__":

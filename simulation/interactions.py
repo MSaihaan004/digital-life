@@ -1,5 +1,3 @@
-import math
-
 from config import (
     MAX_ENERGY,
     FOOD_ENERGY,
@@ -17,14 +15,16 @@ def eat_food(organism, world):
     Returns True if food was consumed, otherwise False.
     """
 
+    # Squared comparison preserves the in-range decision while
+    # avoiding one sqrt per candidate food item.
+    eat_squared = EAT_DISTANCE * EAT_DISTANCE
+
     for index, (food_x, food_y) in enumerate(world.food):
 
         dx = food_x - organism.x
         dy = food_y - organism.y
 
-        distance = math.sqrt(dx * dx + dy * dy)
-
-        if distance <= EAT_DISTANCE:
+        if dx * dx + dy * dy <= eat_squared:
 
             # Remove the food from the world.
             world.food.pop(index)

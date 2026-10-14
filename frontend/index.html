@@ -94,6 +94,27 @@
                     </div>
                 </div>
 
+                <!-- Simulation Controls -->
+                <div class="control-panel" role="group" aria-label="Simulation controls">
+                    <div class="control-buttons">
+                        <button id="pause-button" type="button" class="control-button">
+                            ⏸ Pause
+                        </button>
+                        <button id="resume-button" type="button" class="control-button">
+                            ▶ Resume
+                        </button>
+                        <button id="step-button" type="button" class="control-button">
+                            ⏭ Step once
+                        </button>
+                        <button id="reset-button" type="button" class="control-button control-button-danger">
+                            ↺ Reset
+                        </button>
+                    </div>
+
+                    <p id="control-status" class="control-status" role="status" aria-live="polite"></p>
+                    <p id="control-error" class="control-error" role="alert" hidden></p>
+                </div>
+
                 <!-- World Legend -->
                 <div class="world-legend">
                     <div class="legend-item">
@@ -116,6 +137,40 @@
 
             <!-- Statistics Sidebar -->
             <aside class="sidebar">
+
+                <section class="panel" aria-label="Simulation status">
+                    <div class="panel-heading">
+                        <h2>Status</h2>
+                        <span class="panel-icon">●</span>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>Simulation</span>
+                        <strong id="simulation-status">—</strong>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>Worker</span>
+                        <strong id="worker-health">—</strong>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>Tick rate</span>
+                        <strong id="tick-rate">—</strong>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>Last tick</span>
+                        <strong id="last-tick">—</strong>
+                    </div>
+
+                    <div class="stat-row">
+                        <span>Data</span>
+                        <strong id="data-freshness">—</strong>
+                    </div>
+
+                    <p id="worker-error" class="worker-error" role="alert" hidden></p>
+                </section>
 
                 <section class="panel">
                     <div class="panel-heading">
@@ -215,6 +270,16 @@
 
                         <div class="inspector-grid">
                             <div class="detail-item">
+                                <span>Status</span>
+                                <strong id="organism-status">—</strong>
+                            </div>
+
+                            <div class="detail-item">
+                                <span>Position</span>
+                                <strong id="organism-position">—</strong>
+                            </div>
+
+                            <div class="detail-item">
                                 <span>Energy</span>
                                 <strong id="organism-energy">—</strong>
                             </div>
@@ -243,7 +308,14 @@
                                 <span>Offspring</span>
                                 <strong id="organism-offspring">—</strong>
                             </div>
+
+                            <div class="detail-item">
+                                <span>Data tick</span>
+                                <strong id="inspector-tick">—</strong>
+                            </div>
                         </div>
+
+                        <p id="inspector-error" class="inspector-error" role="alert" hidden></p>
                     </div>
 
                     <div class="inspector-group">
@@ -285,12 +357,58 @@
                 </div>
             </section>
 
+            <!-- Analytics -->
+            <section class="analytics panel" aria-label="Simulation analytics">
+                <div class="panel-heading">
+                    <div>
+                        <h2>Analytics</h2>
+                        <p>Recorded backend metrics over time.</p>
+                    </div>
+
+                    <label class="trait-select-label" for="trait-select">
+                        Genome trait
+                        <select id="trait-select" aria-describedby="analytics-status">
+                            <option value="average_metabolism">Metabolism</option>
+                            <option value="average_speed">Speed</option>
+                            <option value="average_vision">Vision</option>
+                            <option value="average_size">Size</option>
+                            <option value="average_reproduction_threshold">Reproduction threshold</option>
+                            <option value="average_mutation_rate">Mutation rate</option>
+                        </select>
+                    </label>
+                </div>
+
+                <p id="analytics-status" class="analytics-status" role="status" aria-live="polite"></p>
+
+                <div class="charts-grid">
+                    <figure class="chart-item">
+                        <figcaption>Living population (per tick)</figcaption>
+                        <canvas id="chart-population" class="chart-canvas" aria-label="Living population over time"></canvas>
+                    </figure>
+
+                    <figure class="chart-item">
+                        <figcaption>Births and deaths (per tick)</figcaption>
+                        <canvas id="chart-vitality" class="chart-canvas" aria-label="Births and deaths over time"></canvas>
+                    </figure>
+
+                    <figure class="chart-item">
+                        <figcaption>Average energy (per tick)</figcaption>
+                        <canvas id="chart-energy" class="chart-canvas" aria-label="Average energy over time"></canvas>
+                    </figure>
+
+                    <figure class="chart-item">
+                        <figcaption id="trait-chart-caption">Genome trait (per tick)</figcaption>
+                        <canvas id="chart-trait" class="chart-canvas" aria-label="Genome trait over time"></canvas>
+                    </figure>
+                </div>
+            </section>
+
         </main>
 
         <!-- Footer -->
         <footer class="footer">
             <span>Digital Life</span>
-            <span>Python Simulation Engine · Read-only Dashboard</span>
+            <span>Python Simulation Engine · Live Dashboard</span>
         </footer>
 
     </div>

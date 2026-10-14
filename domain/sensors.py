@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 import math
 
+from config import MAX_ENERGY
+
 from .organism import Organism
 
 
@@ -30,8 +32,9 @@ def calculate_distance(x1, y1, x2, y2):
 
 def sense_nearest_food(organism, food):
     vision_range = organism.genome.vision * 200.0
+    vision_squared = vision_range * vision_range
 
-    nearest_distance = float("inf")
+    nearest_squared = float("inf")
     nearest_dx = 0.0
     nearest_dy = 0.0
 
@@ -40,25 +43,40 @@ def sense_nearest_food(organism, food):
         dx = food_x - organism.x
         dy = food_y - organism.y
 
-        distance = math.sqrt(dx * dx + dy * dy)
+        # Squared comparison preserves nearest-target ordering
+        # (monotonic for non-negative distances) and avoids one
+        # sqrt per candidate; sqrt is applied once below.
+        squared = dx * dx + dy * dy
 
         # Ignore food outside the organism's vision
-        if distance > vision_range:
+        if squared > vision_squared:
             continue
 
-        if distance < nearest_distance:
-            nearest_distance = distance
+        if squared < nearest_squared:
+            nearest_squared = squared
             nearest_dx = dx
             nearest_dy = dy
 
-    return nearest_distance, nearest_dx, nearest_dy
+    if nearest_squared == float("inf"):
+        return float("inf"), 0.0, 0.0
+
+    return nearest_squared ** 0.5, nearest_dx, nearest_dy
 
 
 # Organism Sensing
 
 def sense_nearest_organism(organism, organisms):
+    """Return nearest living organism within vision range.
 
-    nearest_distance = float("inf")
+    Vision restriction is applied consistently with food sensing:
+    vision_range = vision * 200.0. Organisms beyond range are
+    not detectable. Returns (inf, 0.0, 0.0) when none detectable.
+    Pure read-only: never mutates world state.
+    """
+    vision_range = organism.genome.vision * 200.0
+    vision_squared = vision_range * vision_range
+
+    nearest_squared = float("inf")
     nearest_dx = 0.0
     nearest_dy = 0.0
 
@@ -73,21 +91,27 @@ def sense_nearest_organism(organism, organisms):
         dx = other.x - organism.x
         dy = other.y - organism.y
 
-        distance = math.sqrt(dx * dx + dy * dy)
+        squared = dx * dx + dy * dy
 
-        if distance < nearest_distance:
-            nearest_distance = distance
+        if squared > vision_squared:
+            continue
+
+        if squared < nearest_squared:
+            nearest_squared = squared
             nearest_dx = dx
             nearest_dy = dy
 
-    return nearest_distance, nearest_dx, nearest_dy
+    if nearest_squared == float("inf"):
+        return float("inf"), 0.0, 0.0
+
+    return nearest_squared ** 0.5, nearest_dx, nearest_dy
 
 # Energy Sensing
 
 
 def sense_energy(organism):
 
-    return organism.energy / 100.0
+    return organism.energy / MAX_ENERGY
 
 # Boundary Sensing
 
